@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isDesktop } from "../services/platform";
 defineOptions({ inheritAttrs: false });
 import { computed, onMounted, ref, watch } from "vue";
 import { route } from "../services/router";
@@ -133,6 +134,10 @@ function saveDownloadSetting<Key extends keyof DownloadSettings>(key: Key) {
     }
   });
 }
+const musicDirectoryPlaceholder = isDesktop
+  ? "输入本机音乐文件夹路径，例如 D:\\Music"
+  : "输入 NAS 上的音乐文件夹路径，例如 /vol1/1000/music";
+
 </script>
 <template>
   <PageLayout
@@ -180,7 +185,7 @@ function saveDownloadSetting<Key extends keyof DownloadSettings>(key: Key) {
             <el-form-item label="音乐库路径">
               <el-input
                 v-model="directory"
-                placeholder="输入服务器绝对路径，例如 /vol1/1000/music"
+                :placeholder="musicDirectoryPlaceholder"
                 clearable
               />
             </el-form-item>

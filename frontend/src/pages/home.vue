@@ -209,6 +209,8 @@ function openPlaylist(playlist: Chart) {
   overflow-y: auto;
   padding-bottom: var(--list-bottom-padding);
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--day-scrollbar, #34513e) transparent;
 }
 .home-page :deep(.content > .collection-page) {
   flex: none;
@@ -216,7 +218,8 @@ function openPlaylist(playlist: Chart) {
 .home-page :deep(.song-table-rows) {
   overflow: visible;
 }
-.platform-tabs {
+.home-page .platform-tabs {
+  display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 26px;

@@ -76,6 +76,52 @@ const {
   resize: resizeQueue,
 } = usePagination(queue);
 const playbackMode = ref("列表循环");
+type PlaybackSnapshot = {
+  queue: Track[];
+  current: Track | null;
+  progress: number;
+  mode: string;
+  nextQueuedId?: string;
+};
+const desktopPlayback = (window as Window & {
+  desktopPlayback?: {
+    read: () => PlaybackSnapshot | null;
+    save: (state: PlaybackSnapshot) => boolean;
+  };
+}).desktopPlayback;
+let restorePosition: number | undefined;
+let lastSavedProgress = 0;
+
+function savePlayback() {
+  if (!desktopPlayback) return;
+  if (desktopPlayback.save(JSON.parse(JSON.stringify({
+    queue: queue.value.map((track) => ({ ...track })),
+    current: current.value ? { ...current.value } : null,
+    progress: restorePosition ?? progress.value,
+    mode: playbackMode.value,
+    nextQueuedId,
+  })))) lastSavedProgress = progress.value;
+}
+
+if (desktopPlayback) {
+  const saved = desktopPlayback.read();
+  if (saved) {
+    queue.value = saved.queue;
+    current.value = saved.current;
+    duration.value = saved.current?.duration ?? 0;
+    progress.value = saved.progress;
+    restorePosition = saved.current ? saved.progress : undefined;
+    playbackMode.value = saved.mode;
+    nextQueuedId = saved.nextQueuedId;
+  }
+
+  watch([queue, current, playbackMode, playing], savePlayback, { deep: true });
+  watch(progress, (value) => {
+    if (Math.abs(value - lastSavedProgress) >= 5) savePlayback();
+  });
+  onMounted(() => window.addEventListener("beforeunload", savePlayback));
+  onUnmounted(() => window.removeEventListener("beforeunload", savePlayback));
+}
 const lyricContainer = ref<HTMLElement>();
 const followLyrics = ref(true);
 function scrollCurrentLyric(smooth = true) {
@@ -199,7 +245,7 @@ const playbackQualityLabel = computed(() => {
   }
 });
 
-async function play(track: Track, replace = true, retry = false) {
+async function play(track: Track, replace = true, retry = false, position?: number) {
   if (!track.available) {
     notice.value = "文件暂不可用，请检查目录后重新扫描";
     return;
@@ -212,8 +258,9 @@ async function play(track: Track, replace = true, retry = false) {
   mediaControl.pause(audio.value);
   playing.value = false;
   buffering.value = false;
+  restorePosition = position;
   current.value = track;
-  progress.value = 0;
+  progress.value = position ?? 0;
   duration.value = track.duration;
   lyricText.value = "";
   playbackUrl.value = "";
@@ -337,7 +384,7 @@ async function resumePlayback() {
     return;
   }
   if (!playbackUrl.value) {
-    void play(current.value, false);
+    void play(current.value, false, false, restorePosition);
     return;
   }
   if (audio.value) {
@@ -405,6 +452,13 @@ function seek(value: number) {
     audio.value.currentTime = Math.max(0, Number.isFinite(length) ? Math.min(length, value) : value);
     progress.value = audio.value.currentTime;
   }
+}
+function loadedMetadata() {
+  duration.value = Number.isFinite(audio.value?.duration) ? audio.value!.duration : 0;
+  if (restorePosition === undefined) return;
+  const position = restorePosition;
+  restorePosition = undefined;
+  seek(position);
 }
 function clock(n: number) {
   return `${Math.floor((n || 0) / 60)}:${String(Math.floor((n || 0) % 60)).padStart(2, "0")}`;
@@ -754,9 +808,7 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
     @pause="playing = false; buffering = false"
     @timeupdate="progress = audio?.currentTime || 0"
     @ratechange="syncSystemMedia"
-    @loadedmetadata="
-      duration = Number.isFinite(audio?.duration) ? audio!.duration : 0
-    "
+    @loadedmetadata="loadedMetadata"
     @ended="buffering = false; next(1, true)"
     @error="playbackError"
   />
@@ -1511,11 +1563,11 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   border-bottom-color: rgb(171 235 194 / 52%);
   border-radius: 48px;
   background-color: var(--day-surface-soft, #202d25);
-  background-image:
-    radial-gradient(ellipse at 9% 115%, rgb(89 193 157 / 45%), transparent 42%),
-    radial-gradient(ellipse at 50% 135%, rgb(157 229 182 / 42%), transparent 48%),
-    radial-gradient(ellipse at 94% 120%, rgb(82 172 119 / 43%), transparent 44%),
-    linear-gradient(110deg, rgb(65 139 115 / 18%), rgb(114 171 131 / 16%));
+  // background-image:
+  //   radial-gradient(ellipse at 9% 115%, rgb(89 193 157 / 45%), transparent 42%),
+  //   radial-gradient(ellipse at 50% 135%, rgb(157 229 182 / 42%), transparent 48%),
+  //   radial-gradient(ellipse at 94% 120%, rgb(82 172 119 / 43%), transparent 44%),
+  //   linear-gradient(110deg, rgb(65 139 115 / 18%), rgb(114 171 131 / 16%));
   box-shadow:
     0 12px 36px rgb(0 0 0 / 34%),
     inset 0 1px rgb(255 255 255 / 12%),

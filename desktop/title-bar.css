@@ -1,0 +1,62 @@
+/* Complete the top edge of the frameless Windows window. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto;
+  height: 1px;
+  z-index: 2147483647;
+  background: var(--day-line, #343b36);
+  pointer-events: none;
+}
+
+.desktop-window-controls {
+  position: fixed;
+  z-index: 2147483647;
+  top: 1px;
+  right: 0;
+  display: flex;
+  -webkit-app-region: no-drag;
+  color: #e9edea;
+}
+
+.desktop-window-controls button {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: 20px/1 "Segoe UI", sans-serif;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+html.light .desktop-window-controls { color: #203329; }
+.desktop-window-controls button:is(:hover, :focus-visible) { background: #28533a !important; color: #fff !important; }
+.desktop-window-controls button[data-action="close"]:is(:hover, :focus-visible) { background: #b92939 !important; color: #fff !important; }
+
+.app-shell {
+  padding-block: 16px 16px !important;
+}
+
+.app-shell::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 92px;
+  height: 16px;
+  z-index: 2000;
+  -webkit-app-region: drag;
+}
+
+.app-shell .topbar {
+  display: none !important;
+}
+.app-shell .content{
+  padding-top:24px!important;
+}
+:root {
+  --sidebar-width: 190px !important;
+}

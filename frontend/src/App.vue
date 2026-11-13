@@ -2,6 +2,7 @@
 import {
   computed,
   defineAsyncComponent,
+  h,
   onMounted,
   onUnmounted,
   provide,
@@ -38,36 +39,29 @@ const pages = Object.fromEntries(
   Object.entries(import.meta.glob<{ default: Component }>("./pages/*.vue")).map(
     ([path, loader]) => [
       path.split("/").pop()!.replace(".vue", ""),
-      defineAsyncComponent(loader),
+      defineAsyncComponent({
+        loader,
+        delay: 0,
+        timeout: 15000,
+        loadingComponent: {
+          render: () => h("p", { class: "page-load-status", role: "status" }, "正在打开页面…"),
+        },
+        errorComponent: {
+          render: () => h("p", { class: "page-load-status", role: "alert" }, [
+            "页面加载失败。请重新加载应用后再试。",
+            h("button", { type: "button", onClick: () => window.location.reload() }, "重新加载"),
+          ]),
+        },
+      }),
     ],
   ),
 );
-const renderedPage = ref(page.value),
-  switchingPage = ref(false);
-const routeComponent = computed(() => pages[routeNames[renderedPage.value]]);
+const routeComponent = computed(() => pages[routeNames[page.value]]);
 const current = ref<Track | null>(null),
   playing = ref(false);
 const player = ref<InstanceType<typeof MusicPlayer>>();
 provide(pausePlaybackKey, () => player.value?.pause());
-let pageFrame = 0,
-  pageTask: ReturnType<typeof setTimeout> | undefined;
-watch(
-  page,
-  (value) => {
-    mobileMenuOpen.value = false;
-    cancelAnimationFrame(pageFrame);
-    clearTimeout(pageTask);
-    switchingPage.value = true;
-    pageFrame = requestAnimationFrame(() => {
-      pageTask = setTimeout(() => {
-        if (page.value !== value) return;
-        renderedPage.value = value;
-        switchingPage.value = false;
-      }, 0);
-    });
-  },
-  { flush: "sync" },
-);
+watch(page, () => { mobileMenuOpen.value = false; });
 function play(track: Track, list: Track[]) {
   player.value?.play(track, list);
 }
@@ -89,8 +83,6 @@ onMounted(async () => {
   }, 1200);
 });
 onUnmounted(() => {
-  cancelAnimationFrame(pageFrame);
-  clearTimeout(pageTask);
   clearInterval(timer);
 });
 </script>
@@ -107,16 +99,13 @@ onUnmounted(() => {
     <el-drawer v-if="isMobile" v-model="mobileMenuOpen" direction="ltr" size="min(270px, 80vw)" :with-header="false" class="mobile-navigation-drawer" aria-label="导航菜单">
       <AppSidebar id="mobile-navigation" mobile-drawer @navigate="mobileMenuOpen = false" />
     </el-drawer>
-    <main
-      :aria-busy="switchingPage"
-      :class="{ 'page-switching': switchingPage }"
-    >
+    <main>
       <KeepAlive
         :include="['search', 'charts', 'discover', 'playlists', 'downloads']"
       >
         <component
           :is="routeComponent"
-          :key="renderedPage"
+          :key="page"
           :current-id="current?.id"
           :playing="playing"
           :favorite-ids="library.favorites"
@@ -127,9 +116,6 @@ onUnmounted(() => {
           @navigate="page = $event"
         />
       </KeepAlive>
-      <div v-if="switchingPage" class="page-loading" role="status" :aria-label="'正在打开' + page">
-        <AppIcon name="refresh" :size="20" spinning />
-      </div>
     </main>
     <MusicPlayer
       ref="player"
@@ -203,13 +189,13 @@ main {
   overflow: hidden;
 }
 
-.page-loading {
-  position: absolute;
-  inset: 20px;
-  display: grid;
-  place-items: center;
+:global(.page-load-status) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
   color: var(--day-muted, #8eaa98);
-  font-size: 14px;
 }
 .app-shell {
   padding: 8px;
@@ -221,31 +207,19 @@ main {
     var(--el-bg-color-page, #101311) 75%
   );
 }
-.app-shell > main {
-  padding-bottom: var(--player-height);
-}
 @media (max-width: 700px) {
   .app-shell {
     padding: 5px;
   }
 }
-.app-shell > :deep(main:has(.local-content, .floating-content)) {
-  padding-bottom: 0;
-}
 .app-shell:has(.local-content, .floating-content) {
   padding-right: 0;
 }
-.app-shell:has(.charts-page) {
+.app-shell:has(.charts-page, .home-page) {
   padding-right: 0;
-}
-.app-shell > :deep(main:has(.charts-page)) {
-  padding-bottom: 0;
 }
 .app-shell > main {
   position: relative;
-}
-.page-switching > :not(.page-loading) {
-  visibility: hidden;
 }
 
 .mobile-header {
@@ -274,7 +248,7 @@ main {
 @media (max-width: 700px) {
   .app-shell,
   .app-shell:has(.local-content, .floating-content),
-  .app-shell:has(.charts-page) {
+  .app-shell:has(.charts-page, .home-page) {
     padding: 0;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: 53px minmax(0, 1fr);
@@ -284,7 +258,7 @@ main {
   }
 }
 @media (min-width: 701px) {
-  .app-shell > :deep(main:has(.settings-layout)) {
+  .app-shell > main {
     padding-bottom: calc(var(--desktop-player-bar-height) + var(--desktop-player-bottom));
   }
 }

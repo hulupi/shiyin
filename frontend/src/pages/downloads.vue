@@ -188,9 +188,17 @@ watch(
   },
 );
 usePageScroll(() => container.value, loadMore);
+const tableWidth = ref(0);
+const showStatusColumns = computed(() => tableWidth.value >= 1020);
+const compactColumns = computed(() => tableWidth.value < 620);
+const showAudioDetails = computed(() => tableWidth.value >= 480);
 let rowsObserver: ResizeObserver | undefined;
 onMounted(() => {
-  rowsObserver = new ResizeObserver(() => loadMore());
+  rowsObserver = new ResizeObserver(() => {
+    if (container.value?.clientWidth) tableWidth.value = container.value.clientWidth;
+    loadMore();
+  });
+  if (container.value) rowsObserver.observe(container.value);
   const element = scrollContainer();
   if (element) rowsObserver.observe(element);
   void nextTick(loadMore);
@@ -390,12 +398,12 @@ onUnmounted(() => {
           <ListSkeleton v-if="initialLoading || fetching" class="download-skeleton" label="正在加载下载任务" />
           <span v-else>暂无匹配的下载任务</span>
         </template>
-        <el-table-column label="#" width="56" align="center">
+        <el-table-column label="#" :width="compactColumns ? 32 : 56" align="center">
           <template #default="{ $index }">
             <span class="track-number">{{ $index + 1 }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="歌曲 / 音质" min-width="320"
+        <el-table-column label="歌曲 / 音质" :min-width="compactColumns ? 140 : 320"
           ><template #default="{ row }"
             ><div
               class="track-info download-track-info"
@@ -446,7 +454,7 @@ onUnmounted(() => {
             </div></template
           ></el-table-column
         >
-        <el-table-column label="保存状态" width="180"
+        <el-table-column v-if="showStatusColumns" label="保存状态" width="180"
           ><template #default="{ row }"
             ><span class="download-metadata download-save-labels"
               ><span
@@ -462,7 +470,7 @@ onUnmounted(() => {
             ></template
           ></el-table-column
         >
-        <el-table-column label="状态" width="160"
+        <el-table-column v-if="showStatusColumns" label="状态" width="160"
           ><template #default="{ row }"
             ><div class="download-status">
               <el-tag :type="tagType(row.status)" size="small">{{
@@ -487,7 +495,7 @@ onUnmounted(() => {
             </div></template
           ></el-table-column
         >
-        <el-table-column label="格式 / 大小" width="120"
+        <el-table-column v-if="showAudioDetails" label="格式 / 大小" :width="compactColumns ? 90 : 120"
           ><template #default="{ row }"
             ><div class="audio-spec">
               <strong>{{ row.format?.toUpperCase() || "待解析" }}</strong
@@ -495,7 +503,7 @@ onUnmounted(() => {
             </div></template
           ></el-table-column
         >
-        <el-table-column label="时长" width="65"
+        <el-table-column v-if="showAudioDetails" label="时长" :width="compactColumns ? 52 : 65"
           ><template #default="{ row }"
             ><span class="track-time">{{
               row.track?.duration > 0

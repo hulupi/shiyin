@@ -263,7 +263,7 @@ const slots = useSlots();
   }
 }
 .route-page {
-  --list-bottom-padding: calc(var(--player-height) + 20px);
+  --list-bottom-padding: 16px;
   display: flex;
   flex: 1;
   flex-direction: column;

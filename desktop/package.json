@@ -1,0 +1,57 @@
+{
+  "name": "shiyin-desktop",
+  "version": "0.1.15",
+  "private": true,
+  "description": "拾音桌面本地播放器",
+  "productName": "拾音",
+  "author": "Shiyin",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "package:win": "npm run build:runtime && electron-builder --win nsis --x64",
+    "package:mac": "npm run build:runtime && electron-builder --mac dmg --publish never",
+    "build:runtime": "node build-runtime.mjs"
+  },
+  "devDependencies": {
+    "electron": "45.3.1",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.shiyin.desktop",
+    "directories": {
+      "output": "dist/local"
+    },
+    "files": [
+      "main.cjs",
+      "package.json",
+      "title-bar.cjs",
+      "title-bar.css"
+    ],
+    "artifactName": "Shiyin-Local-Setup-${version}-${arch}.${ext}",
+    "win": {
+      "signAndEditExecutable": false
+    },
+    "extraResources": [
+      {
+        "from": "build/runtime",
+        "to": "runtime",
+        "filter": [
+          "backend/**/*",
+          "frontend/**/*",
+          "launch.cjs",
+          "tray.png",
+          "package.json"
+        ]
+      },
+      {
+        "from": "build/runtime/node_modules",
+        "to": "runtime/node_modules",
+        "filter": [
+          "**/*",
+          "!.bin{,/**/*}",
+          "!.package-lock.json"
+        ]
+      }
+    ]
+  }
+}

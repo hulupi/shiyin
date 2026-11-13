@@ -16,6 +16,11 @@ const gatewayPrefix = process.env.SHIYIN_GATEWAY_PREFIX || '';
 const socketPath = process.env.SHIYIN_SOCKET_PATH;
 if (process.env.NODE_ENV === 'production' && (!socketPath || gatewayPrefix !== '/app/shiyin')) throw Error('Production requires the fnOS gateway and Unix Socket');
 const app = express();
+const desktopKey = process.env.SHIYIN_DESKTOP_KEY;
+if (desktopKey) app.use((req,res,next) => {
+  if (req.get('x-shiyin-desktop') !== desktopKey) return res.sendStatus(403);
+  next();
+});
 if (gatewayPrefix) {
   app.use((req,res,next) => {
     if (req.path !== gatewayPrefix && !req.path.startsWith(gatewayPrefix + '/')) return res.sendStatus(404);
@@ -116,7 +121,7 @@ app.get('/api/tracks/:id/:action', async (req,res,next) => {
 app.use(express.static(path.join(root,'frontend/dist')));
 app.use((error: Error, _req: express.Request,res: express.Response,_next: express.NextFunction) => { console.error(error.message); if(!res.headersSent) res.status(400).json({error:error.name==='TimeoutError'?'音源请求超时，请重试':error.name==='AbortError'?'请求已取消':error.message || '请求失败'}); });
 const port = Number(process.env.PORT || 3180); const host = process.env.HOST || '127.0.0.1';
-const server = socketPath
+export const server = socketPath
   ? app.listen(socketPath, () => { chmodSync(socketPath, 0o666); console.log('拾音: ' + socketPath); })
   : app.listen(port,host,() => console.log('拾音: http://' + host + ':' + port));
 server.on('error', error => { console.error(error); process.exit(1); });
