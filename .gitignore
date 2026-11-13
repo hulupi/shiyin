@@ -1,0 +1,32 @@
+# Dependencies and build outputs
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Runtime data, user scripts and downloaded media
+/backend/data/
+/data/
+/downloads/
+/cache/
+/logs/
+*.log
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+
+# Release artifacts
+*.fpk
+
+# Editors and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

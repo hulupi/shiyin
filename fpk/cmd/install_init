@@ -1,0 +1,14 @@
+#!/bin/bash
+
+# The installer can serialize a checked checkbox as a scalar or a JSON array.
+case "${wizard_agree_terms:-}" in
+  agree|'["agree"]'|true|1|yes|on) exit 0 ;;
+esac
+
+message='请先阅读并勾选同意《免责声明与使用许可》后再安装拾音。'
+if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+  printf '%s\n' "$message" > "$TRIM_TEMP_LOGFILE" || printf '%s\n' "$message" >&2
+else
+  printf '%s\n' "$message" >&2
+fi
+exit 1

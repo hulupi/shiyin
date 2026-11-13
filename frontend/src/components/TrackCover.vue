@@ -1,0 +1,138 @@
+<script setup lang="ts">
+import { computed, inject, ref, watch } from "vue";
+import type { Track } from "../../../backend/src/contracts";
+import { trackCover } from "../services/music";
+import AppIcon from "./AppIcon.vue";
+import { pausePlaybackKey, playbackLoadingId } from "../stores/playbackControl";
+const props = defineProps<{
+  track: Track;
+  playback?: boolean;
+  playable?: boolean;
+  playing?: boolean;
+}>();
+const emit = defineEmits<{ play: [] }>();
+const loading = computed(() => playbackLoadingId.value === props.track.id);
+const pausePlayback = inject(pausePlaybackKey);
+const canPause = computed(() => Boolean(pausePlayback) && (loading.value || props.playing));
+const label = computed(() =>
+  canPause.value ? "暂停 " + props.track.title : "播放 " + props.track.title,
+);
+function handleClick(event: MouseEvent) {
+  if (!props.playable) return;
+  event.stopPropagation();
+  if (canPause.value) pausePlayback?.();
+  else emit("play");
+}
+const failed = ref(false);
+watch(
+  () => props.track.id,
+  () => (failed.value = false),
+);
+</script>
+<template>
+  <component
+    :is="playable ? 'button' : 'div'"
+    class="cover"
+    :class="{ 'cover-playable': playable, 'cover-playback-active': playback && (loading || playing) }"
+    :type="playable ? 'button' : undefined"
+    :aria-label="playable ? label : undefined"
+    :aria-busy="playback && loading ? true : undefined"
+    @click="handleClick"
+    @dblclick="playable && $event.stopPropagation()"
+  >
+    <img
+      v-if="(track.online || track.hasCover) && !failed"
+      :src="trackCover(track)"
+      :alt="track.title + ' 封面'"
+      loading="lazy"
+      @error="failed = true"
+    /><AppIcon v-else name="music" :size="23" />
+    <span v-if="playback" class="cover-playback">
+      <span v-if="loading" role="status" aria-label="正在加载"><AppIcon name="refresh" :size="17" spinning /></span>
+      <span v-else-if="playing" class="cover-playing" role="img" aria-label="正在播放">
+        <i></i><i></i><i></i>
+      </span>
+      <AppIcon v-else name="play" :size="17" fill="currentColor" />
+    </span>
+  </component>
+</template>
+
+<style scoped lang="scss">
+.cover {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #2b4232, #19231c);
+  color: #6c997b;
+  flex-shrink: 0;
+  overflow: hidden;
+  font-size: 24px;
+  position: relative;
+}
+
+.cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cover-playable {
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.cover-playback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: rgb(0 0 0 / 48%);
+  opacity: 0;
+}
+
+.cover-playback-active .cover-playback,
+.cover-playable:hover .cover-playback,
+.cover-playable:focus-visible .cover-playback,
+button:hover .cover-playback,
+button:focus-visible .cover-playback {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .cover-playback { opacity: 1; }
+}
+
+.cover-playing {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 16px;
+  color: var(--green);
+}
+
+.cover-playing i {
+  width: 3px;
+  height: 100%;
+  border-radius: 2px;
+  background: currentColor;
+  transform-origin: bottom;
+  animation: cover-equalizer 0.8s ease-in-out infinite alternate;
+}
+
+.cover-playing i:nth-child(2) { animation-delay: -0.45s; }
+.cover-playing i:nth-child(3) { animation-delay: -0.2s; }
+
+@keyframes cover-equalizer {
+  from { transform: scaleY(0.35); }
+  to { transform: scaleY(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cover-playing i { animation: none; }
+  .cover-playing i:nth-child(2) { height: 55%; }
+}
+</style>

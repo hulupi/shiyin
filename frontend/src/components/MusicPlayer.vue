@@ -1,0 +1,2019 @@
+<script setup lang="ts">
+import { preferredVariant, variantQualityName } from "../services/music";
+import { appUrl } from "../services/urls";
+import { computed, ref, watch, nextTick, onMounted, onUnmounted } from "vue";
+import type { Track } from "../../../backend/src/contracts";
+import AppIcon from "./AppIcon.vue";
+import TrackCover from "./TrackCover.vue";
+import ListPagination from "./ListPagination.vue";
+import { usePagination } from "../stores/usePagination";
+import { useAudioSpectrum } from "../stores/useAudioSpectrum";
+import { createPlaybackControl, playbackLoadingId } from "../stores/playbackControl";
+import { connectSystemMediaSession } from "../stores/systemMediaSession";
+const mediaControl = createPlaybackControl();
+import {
+  library,
+  preferredQuality,
+  playbackFallback,
+  refreshLibrary as refresh,
+  toggleFavorite as favorite,
+} from "../stores/library";
+import { requestApi as api } from "../services/api";
+import { notify, reportError as message, inform } from "../services/feedback";
+const emit = defineEmits<{
+  current: [track: Track | null];
+  playing: [value: boolean];
+}>();
+const fallbackTracks = computed(
+  () => playbackFallback.value ?? library.value.tracks,
+);
+const notice = ref("");
+watch(
+  notice,
+  (text) => {
+    if (text) {
+      inform(text);
+      notice.value = "";
+    }
+  },
+  { flush: "sync" },
+);
+const current = ref<Track | null>(null),
+  queue = ref<Track[]>([]),
+  audio = ref<HTMLAudioElement>(),
+  playing = ref(false),
+  progress = ref(0),
+  duration = ref(0),
+  volume = ref(0.7),
+  showLyrics = ref(false),
+  showQueue = ref(false),
+  lyricText = ref("");
+const { spectrumCanvas, lyricSpectrumCanvas, prepareSpectrum } =
+  useAudioSpectrum(audio, playing);
+let lyricRequest = 0;
+const playbackUrl = ref(""),
+  playbackSource = ref("本地"),
+  playbackQuality = ref(""),
+  resolving = ref(false),
+  buffering = ref(false);
+watch(
+  () => (resolving.value || buffering.value || mediaControl.pending) ? current.value?.id : undefined,
+  (id) => (playbackLoadingId.value = id),
+);
+let playbackController: AbortController | undefined;
+let usedSourceId = "";
+let playbackActivityId: string | undefined;
+let playbackActivityReported = false;
+let failedSources: string[] = [];
+let nextQueuedId: string | undefined;
+
+const {
+  currentPage: queuePage,
+  pageSize: queueSize,
+  total: queueTotal,
+  offset: queueOffset,
+  pagedItems: pagedQueue,
+  resize: resizeQueue,
+} = usePagination(queue);
+const playbackMode = ref("列表循环");
+const lyricContainer = ref<HTMLElement>();
+const followLyrics = ref(true);
+function scrollCurrentLyric(smooth = true) {
+  const container = lyricContainer.value;
+  const line = container?.querySelector<HTMLElement>('[data-active="true"]');
+  if (!container || !line) return;
+  const containerRect = container.getBoundingClientRect();
+  const lineRect = line.getBoundingClientRect();
+  const top =
+    container.scrollTop +
+    lineRect.top -
+    containerRect.top -
+    container.clientTop -
+    (container.clientHeight - lineRect.height) / 2;
+  container.scrollTo({
+    top: Math.max(0, top),
+    behavior: smooth ? "smooth" : "instant",
+  });
+}
+function followCurrentLyric() {
+  followLyrics.value = true;
+  void nextTick(() => scrollCurrentLyric());
+}
+function switchMode() {
+  const modes = ["列表循环", "单曲循环", "随机播放", "顺序播放"];
+  playbackMode.value =
+    modes[(modes.indexOf(playbackMode.value) + 1) % modes.length];
+}
+
+const lyricLines = computed(() =>
+  lyricText.value
+    .split(/\r?\n/)
+    .flatMap((line) => {
+      const matches = [...line.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)],
+        text = line.replace(/\[[^\]]*\]/g, "").trim();
+      return matches.length
+        ? matches.map((m) => ({ time: Number(m[1]) * 60 + Number(m[2]), text }))
+        : text
+          ? [{ time: -1, text }]
+          : [];
+    })
+    .sort((a, b) => a.time - b.time),
+);
+const activeLine = computed(() => {
+  let index = -1;
+  lyricLines.value.forEach((line, i) => {
+    if (line.time >= 0 && line.time <= progress.value) index = i;
+  });
+  return index;
+});
+watch(
+  [activeLine, lyricText],
+  () => {
+    if (showLyrics.value && followLyrics.value) scrollCurrentLyric();
+  },
+  { flush: "post" },
+);
+watch(
+  showLyrics,
+  (open) => {
+    if (open) {
+      followLyrics.value = true;
+      scrollCurrentLyric(false);
+    }
+  },
+  { flush: "post" },
+);
+watch(
+  () => current.value?.id,
+  () => {
+    followLyrics.value = true;
+  },
+);
+function deletingTrackFile(event: Event) {
+  const id = (event as CustomEvent<string>).detail;
+  if (
+    current.value?.id !== id &&
+    !playbackUrl.value.startsWith(appUrl("/api/tracks/" + encodeURIComponent(id) + "/"))
+  )
+    return;
+  playbackController?.abort();
+  lyricRequest++;
+  mediaControl.pause(audio.value);
+  audio.value?.removeAttribute("src");
+  audio.value?.load();
+  current.value = null;
+  playbackUrl.value = "";
+  playing.value = false;
+  resolving.value = false;
+  buffering.value = false;
+  progress.value = 0;
+  duration.value = 0;
+  lyricText.value = "";
+}
+function deletedTrackFile(event: Event) {
+  const id = (event as CustomEvent<string>).detail;
+  queue.value = queue.value.filter((track) => track.id !== id);
+  if (nextQueuedId === id) nextQueuedId = undefined;
+  void refresh();
+}
+onMounted(() => {
+  window.addEventListener("track-file-deleting", deletingTrackFile);
+  window.addEventListener("track-file-deleted", deletedTrackFile);
+});
+onUnmounted(() => {
+  playbackController?.abort();
+  lyricRequest++;
+  mediaControl.pause(audio.value);
+  playbackLoadingId.value = undefined;
+  window.removeEventListener("track-file-deleting", deletingTrackFile);
+  window.removeEventListener("track-file-deleted", deletedTrackFile);
+});
+const playbackQualityLabel = computed(() => {
+  if (!playbackUrl.value || resolving.value) return "";
+  switch (playbackQuality.value) {
+    case "flac24bit": return "Hi-Res";
+    case "flac": return "FLAC";
+    case "320k": return "320 kbps";
+    case "128k": return "128 kbps";
+    default: return playbackQuality.value;
+  }
+});
+
+async function play(track: Track, replace = true, retry = false) {
+  if (!track.available) {
+    notice.value = "文件暂不可用，请检查目录后重新扫描";
+    return;
+  }
+  playbackController?.abort();
+  const controller = new AbortController();
+  playbackController = controller;
+  const request = ++lyricRequest;
+  if (replace) queue.value = [...fallbackTracks.value];
+  mediaControl.pause(audio.value);
+  playing.value = false;
+  buffering.value = false;
+  current.value = track;
+  progress.value = 0;
+  duration.value = track.duration;
+  lyricText.value = "";
+  playbackUrl.value = "";
+  playbackActivityReported = false;
+  if (!retry) {
+    playbackActivityId = undefined;
+    failedSources = [];
+    usedSourceId = "";
+  }
+  const audioReady = prepareSpectrum();
+  audioReady.catch(() => {});
+  resolving.value = true;
+  try {
+    let lyricUrl = "/tracks/" + encodeURIComponent(track.id) + "/lyrics";
+    if (track.online) {
+      const result = await api(
+        "/online/" + encodeURIComponent(track.id) + "/resolve",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            quality: preferredQuality.value,
+            exclude: failedSources,
+            skipLocal: retry,
+            activityId: playbackActivityId,
+          }),
+          signal: controller.signal,
+        },
+      );
+      if (request !== lyricRequest) return;
+      usedSourceId = result.sourceId || "";
+      playbackActivityId = result.activityId;
+      playbackSource.value = result.sourceName;
+      playbackQuality.value = result.mode === "local" && result.audioVariant
+        ? variantQualityName(result.audioVariant)
+        : result.quality;
+      playbackUrl.value = appUrl(result.audioUrl);
+      lyricUrl = result.lyricUrl.replace(/^\/api/, "");
+    } else {
+      playbackSource.value = "本地";
+      playbackQuality.value = variantQualityName(preferredVariant(track));
+      playbackUrl.value =
+        appUrl("/api/tracks/" + encodeURIComponent(track.id) + "/audio");
+    }
+    await nextTick();
+    await audioReady;
+    if (request !== lyricRequest) return;
+    if (audio.value) {
+      audio.value.volume = volume.value;
+      await mediaControl.play(audio.value);
+    }
+    if (request !== lyricRequest) return;
+    api(lyricUrl, { signal: controller.signal })
+      .then((result) => {
+        if (request === lyricRequest) lyricText.value = result.text;
+      })
+      .catch(() => {});
+    if (track.online) void refresh();
+  } catch (e) {
+    if (!controller.signal.aborted && request === lyricRequest) {
+      if (playbackUrl.value) reportPlaybackFailure();
+      message(e);
+    }
+  } finally {
+    if (request === lyricRequest) resolving.value = false;
+  }
+}
+function playOnline(track: Track, list: Track[]) {
+  queue.value = [...list];
+  void play(track, false);
+}
+function enqueue(track: Track, asNext = false) {
+  const existing = queue.value.findIndex((item) => item.id === track.id);
+  if (existing >= 0 && current.value?.id === track.id) {
+    notice.value = "这首歌曲正在播放";
+    return;
+  }
+  if (existing >= 0) queue.value.splice(existing, 1);
+  if (asNext) {
+    nextQueuedId = track.id;
+    const index = queue.value.findIndex(
+      (item) => item.id === current.value?.id,
+    );
+    queue.value.splice(index < 0 ? 0 : index + 1, 0, track);
+  } else queue.value.push(track);
+  notify(asNext ? "已设为下一首播放" : "已加入播放队列");
+}
+function reportPlaybackFailure() {
+  if (!current.value?.online || !playbackActivityId) return;
+  void api("/online/" + encodeURIComponent(current.value.id) + "/playback-failed", {
+    method: "POST",
+    body: JSON.stringify({ activityId: playbackActivityId }),
+  }).catch(() => {});
+}
+function playbackError() {
+  buffering.value = false;
+  if (resolving.value || !playbackUrl.value || !current.value) return;
+  playing.value = false;
+  if (current.value.online && failedSources.length < 20) {
+    if (usedSourceId && !failedSources.includes(usedSourceId))
+      failedSources.push(usedSourceId);
+    notice.value = "当前文件无法播放，正在尝试下一音源…";
+    void play(current.value, false, true);
+  } else {
+    reportPlaybackFailure();
+    notice.value = "音频暂时无法播放，请检查文件或浏览器格式支持。";
+  }
+}
+function pausePlayback() {
+  playbackController?.abort();
+  lyricRequest++;
+  resolving.value = false;
+  buffering.value = false;
+  mediaControl.pause(audio.value);
+  playing.value = false;
+}
+async function resumePlayback() {
+  if (resolving.value || mediaControl.pending || (audio.value && !audio.value.paused)) return;
+  if (!current.value) {
+    const first = queue.value[0] || fallbackTracks.value[0];
+    if (first) void play(first, !queue.value.length);
+    return;
+  }
+  if (!playbackUrl.value) {
+    void play(current.value, false);
+    return;
+  }
+  if (audio.value) {
+    try {
+      await mediaControl.play(audio.value, prepareSpectrum());
+    } catch (e) {
+      message(e);
+    }
+  }
+}
+function toggle() {
+  if (resolving.value || mediaControl.pending || (audio.value && !audio.value.paused)) pausePlayback();
+  else void resumePlayback();
+}
+
+function recordPlay() {
+  buffering.value = false;
+  playing.value = true;
+  if (!current.value) return;
+  const logPlayback = !playbackActivityReported;
+  playbackActivityReported = true;
+  api("/history/" + encodeURIComponent(current.value.id), {
+    method: "POST",
+    body: JSON.stringify({
+      logPlayback,
+      activityId: logPlayback ? playbackActivityId : undefined,
+    }),
+  })
+    .then((ids) => (library.value.history = ids))
+    .catch(message);
+}
+function next(delta = 1, ended = false) {
+  if (!queue.value.length) return;
+  if (ended && playbackMode.value === "单曲循环" && !nextQueuedId) {
+    seek(0);
+    if (audio.value) void mediaControl.play(audio.value).catch(message);
+    return;
+  }
+  const index = queue.value.findIndex((t) => t.id === current.value?.id);
+  if (
+    ended &&
+    playbackMode.value === "顺序播放" &&
+    index === queue.value.length - 1 &&
+    !nextQueuedId
+  ) {
+    playing.value = false;
+    return;
+  }
+  const forced =
+    delta === 1
+      ? queue.value.findIndex((item) => item.id === nextQueuedId)
+      : -1;
+  const target =
+    forced >= 0
+      ? forced
+      : playbackMode.value === "随机播放"
+        ? Math.floor(Math.random() * queue.value.length)
+        : (index + delta + queue.value.length) % queue.value.length;
+  if (forced >= 0) nextQueuedId = undefined;
+  void play(queue.value[target], false);
+}
+function seek(value: number) {
+  if (audio.value && Number.isFinite(value)) {
+    const length = audio.value.duration;
+    audio.value.currentTime = Math.max(0, Number.isFinite(length) ? Math.min(length, value) : value);
+    progress.value = audio.value.currentTime;
+  }
+}
+function clock(n: number) {
+  return `${Math.floor((n || 0) / 60)}:${String(Math.floor((n || 0) % 60)).padStart(2, "0")}`;
+}
+function cover(track: Track) {
+  return appUrl(
+    "/api/" +
+    (track.online ? "online/" : "tracks/") +
+    encodeURIComponent(track.id) +
+    "/cover"
+  );
+}
+function key(event: KeyboardEvent) {
+  if (
+    event.code === "Space" &&
+    !["INPUT", "TEXTAREA", "BUTTON"].includes(
+      (event.target as HTMLElement)?.tagName,
+    )
+  ) {
+    event.preventDefault();
+    toggle();
+  }
+}
+
+let systemMedia: ReturnType<typeof connectSystemMediaSession> | undefined;
+function syncSystemMedia() {
+  const track = current.value;
+  systemMedia?.update(track ? {
+    id: track.id, title: track.title, artist: track.artist, album: track.album,
+    artwork: track.hasCover ? cover(track) : undefined,
+  } : null, playing.value, duration.value, progress.value, audio.value?.playbackRate || 1);
+}
+watch([current, playing, duration, progress], syncSystemMedia);
+onMounted(() => {
+  systemMedia = connectSystemMediaSession({
+    play: () => { void resumePlayback(); },
+    pause: pausePlayback,
+    previous: () => next(-1),
+    next: () => next(1),
+    stop: () => { pausePlayback(); seek(0); },
+    seek,
+    position: () => audio.value?.currentTime || 0,
+  });
+  syncSystemMedia();
+});
+onUnmounted(() => systemMedia?.dispose());
+
+watch(current, (track) => emit("current", track));
+watch(playing, (value) => emit("playing", value));
+onMounted(() => window.addEventListener("keydown", key));
+onUnmounted(() => {
+  playbackController?.abort();
+  window.removeEventListener("keydown", key);
+});
+defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
+</script>
+<template>
+  <el-drawer
+    v-model="showQueue"
+    title="播放队列"
+    size="min(420px, 100vw)"
+    append-to-body
+    class="queue-drawer"
+    ><p v-if="!queue.length" class="subtle">播放一首歌曲，开始创建队列。</p>
+    <el-button
+      v-for="(track, index) in pagedQueue"
+      :key="track.id"
+      class="queue-row"
+      :class="{ selected: current?.id === track.id }"
+      @click="current?.id === track.id && (playing || playbackLoadingId === track.id) ? pausePlayback() : play(track, false)"
+      ><span>{{ queueOffset + index + 1 }}</span>
+      <TrackCover :track="track" playback :playing="playing && current?.id === track.id" />
+      <div>
+        {{ track.title }}<small>{{ track.artist }}</small>
+      </div></el-button
+    ><ListPagination
+      v-model:page="queuePage"
+      :page-size="queueSize"
+      :total="queueTotal"
+      compact
+      @update:page-size="resizeQueue"
+  /></el-drawer>
+  <el-dialog
+    v-model="showLyrics"
+    fullscreen
+    :show-close="false"
+    :close-on-click-modal="false"
+    append-to-body
+    @opened="followCurrentLyric"
+    class="lyrics-dialog"
+    title="正在播放"
+    modal-class="lyrics-modal"
+    :modal="false"
+  >
+    <section class="lyrics-overlay">
+      <el-button
+        class="close-lyrics icon-button"
+        aria-label="关闭歌词"
+        @click="showLyrics = false"
+        >×</el-button
+      >
+      <div class="lyrics-workspace">
+        <div class="lyric-art">
+          <div class="lyric-info">
+            <div class="large-cover">
+              <img
+                v-if="current?.hasCover"
+                :src="cover(current)"
+                alt="歌曲封面"
+              /><AppIcon v-else name="music" :size="24" />
+              <span v-if="resolving" class="player-cover-loading" role="status" aria-label="正在加载歌曲">
+                <AppIcon name="refresh" :size="28" spinning />
+              </span>
+            </div>
+            <h1>{{ current?.title || "还没有播放歌曲" }}</h1>
+            <p>{{ current?.artist || "选择音乐，开始聆听" }}</p>
+          </div>
+          <div class="lyric-transport">
+            <el-button
+              class="icon-button"
+              :aria-label="playbackMode"
+              :title="playbackMode"
+              @click="switchMode"
+              text
+              ><AppIcon :name="playbackMode" /></el-button
+            >
+            <el-button
+              class="icon-button"
+              aria-label="上一首"
+              @click="next(-1)"
+              text
+              ><AppIcon name="previous"
+            /></el-button>
+            <el-button
+              class="play-button"
+              :aria-label="resolving ? '取消加载' : playing ? '暂停' : '播放'"
+              @click="toggle"
+              ><AppIcon
+                :name="playing ? 'pause' : 'play'"
+                :size="24"
+                fill="currentColor"
+            /></el-button>
+            <el-button
+              class="icon-button"
+              aria-label="下一首"
+              @click="next()"
+              text
+              ><AppIcon name="next"
+            /></el-button>
+            <el-button
+              class="icon-button"
+              :disabled="!current"
+              :class="{
+                liked: current && library.favorites.includes(current.id),
+              }"
+              aria-label="收藏当前歌曲"
+              @click="current && favorite(current)"
+              text
+              ><AppIcon name="heart"
+            /></el-button>
+            <div class="lyric-volume">
+              <AppIcon name="volume" :size="18" /><el-slider
+                v-model="volume"
+                aria-label="音量"
+                :min="0"
+                :max="1"
+                :step="0.01"
+                :show-tooltip="false"
+                @input="audio&amp;&amp;(audio.volume=Number(volume))"
+              />
+            </div>
+          </div>
+        </div>
+        <div class="lyrics-column">
+          <div
+            ref="lyricContainer"
+            class="lyric-scroll"
+            @wheel="followLyrics = false"
+            @touchstart="followLyrics = false"
+          >
+            <p v-if="!lyricLines.length" class="subtle">暂无歌词</p>
+            <el-button
+              v-for="(line, index) in lyricLines"
+              :key="index"
+              :class="{ current: index === activeLine }"
+              :data-active="index === activeLine"
+              :disabled="line.time < 0"
+              @click="seek(line.time)"
+              >{{ line.text || "♪" }}</el-button
+            >
+          </div>
+          <el-button
+            v-if="!followLyrics"
+            class="follow-lyrics secondary"
+            @click="followCurrentLyric"
+            >回到当前歌词</el-button
+          >
+        </div>
+        <div class="lyric-timeline">
+          <canvas
+            ref="lyricSpectrumCanvas"
+            class="lyric-spectrum"
+            aria-hidden="true"
+          ></canvas>
+          <div class="lyric-progress">
+            <span>{{ clock(progress) }}</span
+            ><el-slider
+              aria-label="播放进度"
+              :min="0"
+              :max="duration || 1"
+              :model-value="progress"
+              :step="0.1"
+              :show-tooltip="false"
+              @input="seek(Number($event))"
+            /><span>{{ clock(duration) }}</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </el-dialog>
+  <footer
+    v-show="!showLyrics"
+    class="player"
+    :style="{ '--player-progress': `${duration > 0 ? Math.min(100, Math.max(0, progress / duration * 100)) : 0}%` }"
+  >
+    <canvas
+      ref="spectrumCanvas"
+      class="audio-spectrum"
+      aria-hidden="true"
+    ></canvas>
+    <div class="cover player-cover" :class="{ spinning: playing }">
+      <img v-if="current?.hasCover" :src="cover(current)" alt="" /><AppIcon
+        v-else
+        name="music"
+        :size="24"
+      />
+      <span v-if="resolving" class="player-cover-loading" role="status" aria-label="正在加载歌曲">
+        <AppIcon name="refresh" :size="20" spinning />
+      </span>
+    </div>
+    <div class="now-title" :title="playbackSource">
+      <div class="now-title-line">
+        <strong>{{ current?.title || "准备好，听点音乐" }}</strong>
+        <span
+          v-if="playbackQualityLabel"
+          class="playback-quality"
+          :aria-label="'播放音质 ' + playbackQualityLabel"
+        >{{ playbackQualityLabel }}</span>
+      </div>
+      <div class="track-details">
+        <small>{{ current?.artist || "你的 NAS 私人音乐空间" }}</small>
+        <span v-if="duration > 0" class="track-time">
+          {{ clock(progress) }} / {{ clock(duration) }}
+        </span>
+      </div>
+    </div>
+    <button
+      type="button"
+      class="open-lyrics"
+      aria-label="打开歌词模式"
+      aria-haspopup="dialog"
+      :title="playbackSource || '打开歌词模式'"
+      @click="showLyrics = true"
+    ></button>
+    <div class="controls">
+      <el-button
+        class="icon-button mode-button"
+        :title="playbackMode"
+        :aria-label="playbackMode"
+        @click="switchMode"
+        text
+        ><AppIcon :name="playbackMode" :size="17" /></el-button
+      ><el-button
+        class="icon-button"
+        aria-label="上一首"
+        @click="next(-1)"
+        text
+        ><AppIcon name="previous" /></el-button
+      ><el-button
+        class="play-button"
+        :aria-label="resolving ? '取消加载' : playing ? '暂停' : '播放'"
+        @click="toggle"
+        ><AppIcon
+          :name="playing ? 'pause' : 'play'"
+          :size="21"
+          fill="currentColor" /></el-button
+      ><el-button class="icon-button" aria-label="下一首" @click="next()" text
+        ><AppIcon name="next" /></el-button
+      >
+    </div>
+    <div class="progress">
+      <el-slider
+        aria-label="播放进度"
+        :min="0"
+        :max="duration || 1"
+        :model-value="progress"
+        :step="0.1"
+        :show-tooltip="false"
+        @input="seek(Number($event))"
+      />
+    </div>
+    <div class="player-right">
+      <el-button
+        v-if="current"
+        class="icon-button"
+        :class="{ liked: library.favorites.includes(current.id) }"
+        aria-label="收藏当前歌曲"
+        @click="favorite(current)"
+        text
+        ><AppIcon
+          name="heart"
+          :size="18"
+          :fill="
+            library.favorites.includes(current.id) ? 'currentColor' : 'none'
+          "
+      /></el-button>
+      <el-button
+        class="icon-button"
+        :class="{ liked: showLyrics }"
+        aria-label="歌词"
+        @click="showLyrics = !showLyrics"
+        text
+        >词</el-button
+      ><el-button
+        class="icon-button"
+        :class="{ liked: showQueue }"
+        aria-label="播放队列"
+        @click="showQueue = !showQueue"
+        text
+        ><AppIcon name="queue" /></el-button
+      ><AppIcon name="volume" :size="18" /><el-slider
+        v-model="volume"
+        aria-label="音量"
+        :min="0"
+        :max="1"
+        :step="0.01"
+        :show-tooltip="false"
+        @input="audio&amp;&amp;(audio.volume=Number(volume))"
+      />
+    </div>
+  </footer>
+  <audio
+    ref="audio"
+    :src="playbackUrl || undefined"
+    @playing="recordPlay"
+    @waiting="buffering = Boolean(audio && !audio.paused)"
+    @pause="playing = false; buffering = false"
+    @timeupdate="progress = audio?.currentTime || 0"
+    @ratechange="syncSystemMedia"
+    @loadedmetadata="
+      duration = Number.isFinite(audio?.duration) ? audio!.duration : 0
+    "
+    @ended="buffering = false; next(1, true)"
+    @error="playbackError"
+  />
+</template>
+
+<style scoped lang="scss">
+.secondary {
+  padding: 11px 18px;
+  border-radius: 7px;
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.secondary {
+  border: 1px solid var(--day-line, #344239);
+  background: var(--day-surface-soft, #18201b);
+  color: var(--day-text, #b8c8be);
+}
+
+.subtle {
+  color: var(--day-muted, #6e7e73);
+  font-size: 13px;
+}
+
+.cover {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--day-selected, #2b4232), var(--day-surface-soft, #19231c));
+  color: var(--day-muted, #6c997b);
+  flex-shrink: 0;
+  overflow: hidden;
+  font-size: 24px;
+}
+
+.cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.icon-button {
+  color: var(--day-muted, #87998d);
+  position: relative;
+  padding: 7px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.icon-button:hover {
+  color: var(--day-text, #dcebe1);
+  background: var(--day-surface-soft, #26332b);
+}
+
+.liked {
+  color: var(--green) !important;
+}
+
+.player {
+  position: fixed;
+  inset: auto 0 0;
+  height: 108px;
+  border-top: 1px solid var(--day-line, #2b382e);
+  background: var(--day-surface-soft, #161e19f5);
+  backdrop-filter: blur(20px);
+  z-index: 30;
+  display: grid;
+  grid-template-columns: 1fr minmax(300px, 1.2fr) 1fr;
+  align-items: center;
+  gap: 30px;
+  padding: 0 26px;
+}
+
+.now-playing {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-width: 0;
+}
+
+.player-cover,
+.large-cover {
+  position: relative;
+}
+.player-cover-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  color: white;
+  background: rgb(0 0 0 / 48%);
+  pointer-events: none;
+}
+.player-cover {
+  width: 55px;
+  height: 55px;
+  border-radius: 7px;
+}
+
+.now-title {
+  min-width: 0;
+  max-width: 220px;
+}
+
+.now-title strong {
+  font-size: 14px;
+  font-weight: 500;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.now-title small {
+  color: var(--day-muted, #778c7e);
+  font-size: 12px;
+  display: block;
+  margin-top: 7px;
+}
+
+.now-playing > .icon-button {
+  margin-left: 10px;
+}
+
+.player-center {
+  max-width: 600px;
+  width: 100%;
+  justify-self: center;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 17px;
+  margin-bottom: 11px;
+}
+
+.controls .icon-button {
+  font-size: 18px;
+}
+
+.play-button {
+  background: #e1f2e6;
+  color: #102b19;
+  width: 35px;
+  height: 35px;
+  border-radius: 50%;
+  padding: 0;
+  font-size: 18px;
+}
+
+.play-button:hover {
+  background: #fff;
+  transform: scale(1.04);
+}
+
+.local-indicator {
+  color: var(--day-muted, #60ad78);
+  font-size: 12px;
+  width: 30px;
+}
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--day-muted, #7e9787);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress input {
+  flex: 1;
+  width: 100%;
+}
+
+.player-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  color: var(--day-muted, #91a898);
+}
+
+.player-right .icon-button {
+  font-size: 17px;
+}
+
+.player-right input {
+  width: 85px;
+}
+
+.queue-row {
+  display: flex;
+  gap: 16px;
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  padding: 12px 8px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.queue-row > span {
+  color: var(--day-muted, #617e6a);
+  font-size: 12px;
+}
+
+.queue-row small {
+  display: block;
+  font-size: 12px;
+  color: var(--day-muted, #71907c);
+  margin-top: 5px;
+}
+
+.queue-row.selected {
+  background: var(--day-selected, #23422d);
+  color: var(--green);
+}
+
+.lyrics-overlay {
+  position: fixed;
+  inset: 0 0 108px 224px;
+  z-index: 25;
+  background: radial-gradient(ellipse at 20% 40%, var(--day-selected, #244330), var(--day-surface-soft, #111a14) 70%);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 50px;
+  align-items: center;
+  padding: 70px;
+  overflow: hidden;
+}
+
+.close-lyrics {
+  position: absolute;
+  right: 30px;
+  top: 25px;
+  font-size: 30px;
+}
+
+.large-cover {
+  width: min(30vw, 320px);
+  aspect-ratio: 1;
+  border-radius: 15px;
+  display: grid;
+  place-items: center;
+  background: var(--day-selected, #263e2e);
+  color: var(--day-muted, #75a986);
+  box-shadow: 0 25px 60px #0005;
+  margin-bottom: 30px;
+  overflow: hidden;
+  font-size: 120px;
+}
+
+.large-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lyric-art h1 {
+  font-size: 25px;
+}
+
+.lyric-art p {
+  font-size: 14px;
+  margin-top: 12px;
+}
+
+.lyric-scroll {
+  max-height: 65vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 23px;
+  scroll-behavior: smooth;
+}
+
+.lyric-scroll button {
+  justify-content: flex-start;
+  text-align: left;
+  color: var(--day-muted, #6c8374);
+  font-size: 19px;
+  line-height: 1.7;
+  flex-shrink: 0;
+  opacity: 1;
+}
+
+.lyric-scroll button.current {
+  color: var(--day-accent-text, #75e69d);
+  font-size: 23px;
+}
+
+@media (max-width: 1100px) {
+  .player {
+    grid-template-columns: 1fr 1.2fr;
+    gap: 20px;
+  }
+
+  .player-right {
+    display: none;
+  }
+
+  .lyrics-overlay {
+    left: 190px;
+    padding: 40px;
+    gap: 25px;
+  }
+}
+
+@media (max-width: 700px) {
+  .player {
+    height: 94px;
+    padding: 12px 13px;
+    grid-template-columns: minmax(0, 1fr) 100px;
+    gap: 12px;
+    align-items: start;
+  }
+
+  .now-playing {
+    gap: 9px;
+    padding-top: 5px;
+  }
+
+  .player-cover {
+    width: 39px;
+    height: 39px;
+  }
+
+  .now-title strong {
+    font-size: 12px;
+  }
+
+  .now-title small {
+    font-size: 12px;
+  }
+
+  .now-playing > .icon-button {
+    display: none;
+  }
+
+  .player-center {
+    position: static;
+  }
+
+  .controls {
+    gap: 5px;
+    margin: 5px 0;
+  }
+
+  .controls > .icon-button:nth-child(2),
+  .local-indicator {
+    display: none;
+  }
+
+  .controls .play-button {
+    height: 33px;
+    width: 33px;
+  }
+
+  .progress {
+    position: absolute;
+    bottom: 10px;
+    left: 15px;
+    right: 15px;
+    font-size: 12px;
+  }
+
+  .lyrics-overlay {
+    inset: 0 0 94px 62px;
+    display: flex;
+    flex-direction: column;
+    padding: 55px 22px 20px;
+    gap: 25px;
+    overflow: auto;
+  }
+
+  .lyric-art {
+    text-align: center;
+  }
+
+  .large-cover {
+    width: 130px;
+    margin: 0 auto 15px;
+    font-size: 65px;
+  }
+
+  .lyric-art h1 {
+    font-size: 19px;
+  }
+
+  .lyric-art p {
+    font-size: 13px;
+    margin-top: 5px;
+  }
+
+  .lyric-scroll {
+    width: 100%;
+    max-height: none;
+    flex: 1;
+    min-height: 120px;
+    gap: 18px;
+  }
+
+  .lyric-scroll button {
+    font-size: 14px;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .lyric-scroll button.current {
+    font-size: 17px;
+  }
+
+  .close-lyrics {
+    right: 12px;
+    top: 13px;
+  }
+}
+
+.follow-lyrics {
+  position: absolute;
+  right: 10%;
+  bottom: 25px;
+}
+
+.large-cover > svg {
+  width: 40%;
+  height: 40%;
+}
+
+@media (max-width: 700px) {
+  .controls .mode-button {
+    display: none;
+  }
+}
+.lyrics-overlay {
+  min-height: 0;
+}
+
+.lyric-scroll {
+  height: min(60vh, calc(100dvh - 260px));
+  min-height: 0;
+  max-height: none;
+  padding-block: min(25vh, 180px);
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--day-scrollbar, #34513e) transparent;
+  position: relative;
+}
+
+.lyric-scroll button {
+  min-height: 36px;
+  font-size: 20px;
+  transition: color 0.2s;
+}
+
+.lyric-scroll button.current {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+@media (max-width: 700px) {
+  .lyrics-overlay {
+    overflow: hidden;
+  }
+
+  .lyric-art {
+    flex-shrink: 0;
+  }
+
+  .lyric-scroll {
+    height: 0;
+    min-height: 0;
+    flex: 1 1 0;
+    padding-block: 60px;
+  }
+
+  .lyric-scroll button,
+  .lyric-scroll button.current {
+    font-size: 16px;
+  }
+}
+.player {
+  height: 132px;
+}
+
+.lyrics-overlay {
+  bottom: 132px;
+}
+
+.player-center {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.audio-spectrum {
+  display: block;
+  width: 100%;
+  height: 34px;
+  flex: 0 0 34px;
+  order: 0;
+  pointer-events: none;
+  margin-bottom: 5px;
+}
+
+.player-center .progress {
+  order: 1;
+}
+
+.player-center .controls {
+  order: 2;
+  margin: 9px 0 0;
+  gap: 17px;
+}
+
+@media (max-width: 700px) {
+  .player {
+    height: 118px;
+  }
+
+  .lyrics-overlay {
+    bottom: 118px;
+  }
+
+  .audio-spectrum {
+    position: absolute;
+    bottom: 27px;
+    left: 15px;
+    width: calc(100% - 30px);
+    height: 18px;
+    margin: 0;
+  }
+
+  .player-center .controls {
+    margin: 5px 0;
+    gap: 5px;
+  }
+}
+
+.lyrics-overlay {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.lyric-scroll {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.lyrics-overlay {
+  --lyrics-right-inset: 70px;
+}
+
+.lyric-scroll {
+  min-width: 0;
+  width: calc(100% + var(--lyrics-right-inset));
+  margin-right: calc(-1 * var(--lyrics-right-inset));
+  padding-right: var(--lyrics-right-inset);
+}
+
+@media (max-width: 1100px) {
+  .lyrics-overlay {
+    --lyrics-right-inset: 40px;
+  }
+}
+
+@media (max-width: 700px) {
+  .lyrics-overlay {
+    --lyrics-right-inset: 22px;
+  }
+
+  .lyric-scroll {
+    align-self: flex-start;
+  }
+}
+
+.local-indicator {
+  width: auto;
+  min-width: 30px;
+  white-space: nowrap;
+}
+
+.app-shell > .player {
+  position: fixed;
+  inset: auto 0 0;
+  width: 100%;
+  height: var(--player-height);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 1.2fr) minmax(0, 1fr);
+}
+
+:global(.lyrics-dialog.el-dialog) {
+  height: calc(100dvh - var(--player-height));
+}
+
+@media (max-width: 1100px) {
+  .app-shell > .player {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 1.2fr);
+  }
+}
+
+@media (max-width: 700px) {
+  .app-shell > .player {
+    grid-template-columns: minmax(0, 1fr) 100px;
+  }
+}
+.queue-row.el-button,
+.lyric-scroll :deep(.el-button),
+.icon-button.el-button,
+.play-button.el-button {
+  border: 0;
+  background: none;
+  margin: 0;
+  height: auto;
+}
+.queue-row.el-button > :deep(span),
+.lyric-scroll :deep(.el-button > span),
+.icon-button.el-button > :deep(span) {
+  display: contents;
+}
+.icon-button.el-button {
+  padding: 7px;
+  color: var(--day-muted, #87998d);
+}
+.icon-button.el-button:hover {
+  background: var(--day-surface-soft, #26332b);
+  color: var(--day-text, #dcebe1);
+}
+.play-button.el-button {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  padding: 0;
+  background: #f0f6f2;
+  color: #14251a;
+}
+:global(.queue-drawer .el-drawer__header) {
+  margin-bottom: 8px;
+}
+:global(.queue-drawer .el-drawer__body) {
+  padding-top: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--day-scrollbar, #34513e) transparent;
+}
+.queue-row.el-button {
+  display: flex;
+  width: 100%;
+  min-height: var(--song-row-height);
+  justify-content: flex-start;
+  padding: 6px 10px;
+  border-radius: var(--song-row-radius);
+  text-align: left;
+  white-space: normal;
+}
+.queue-row.el-button + .queue-row.el-button {
+  margin-top: var(--song-row-gap);
+}
+.queue-row.el-button:hover,
+.queue-row.el-button:focus-visible,
+.queue-row.el-button.selected {
+  background: var(--song-row-highlight);
+}
+.queue-row.el-button.selected {
+  color: var(--green);
+}
+:global(.lyrics-modal) {
+  pointer-events: none;
+}
+:global(.lyrics-modal .el-overlay-dialog) {
+  pointer-events: none;
+}
+:global(.lyrics-dialog.el-dialog) {
+  pointer-events: auto;
+  height: calc(100dvh - 108px);
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+}
+:global(.lyrics-dialog .el-dialog__header) {
+  display: none;
+}
+:global(.lyrics-dialog .el-dialog__body) {
+  padding: 0;
+  height: 100%;
+}
+:global(.lyrics-dialog .lyrics-overlay) {
+  position: relative;
+  inset: auto;
+  height: 100%;
+  width: 100%;
+}
+.lyric-scroll :deep(.el-button) {
+  display: block;
+  width: 100%;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.8;
+  padding: 12px 0;
+}
+.lyric-scroll :deep(.el-button.is-disabled) {
+  opacity: 0.55;
+}
+.player :deep(.el-slider) {
+  height: 16px;
+  flex: 1;
+  min-width: 0;
+}
+.player :deep(.el-slider__runway) {
+  height: 4px;
+  margin: 0;
+  background: var(--day-surface-soft, #2a3b30);
+}
+.player :deep(.el-slider__bar) {
+  height: 4px;
+}
+.player :deep(.el-slider__button-wrapper) {
+  top: -16px;
+}
+.player :deep(.el-slider__button) {
+  width: 9px;
+  height: 9px;
+  border: 0;
+  background: var(--green);
+}
+.player-right :deep(.el-slider) {
+  flex: 0 0 80px;
+}
+@media (max-width: 700px) {
+  :global(.lyrics-dialog.el-dialog) {
+    height: calc(100dvh - 132px);
+  }
+}
+.app-shell > .player {
+  left: calc(var(--sidebar-width) + 40px);
+  right: 32px;
+  bottom: var(--desktop-player-bottom);
+  width: min(900px, calc(100% - var(--sidebar-width) - 80px));
+  margin-inline: auto;
+  height: 76px;
+  padding: 0 20px;
+  gap: 18px;
+  border: 1px solid rgb(190 228 203 / 22%);
+  border-bottom-color: rgb(171 235 194 / 52%);
+  border-radius: 48px;
+  background-color: var(--day-surface-soft, #202d25);
+  background-image:
+    radial-gradient(ellipse at 9% 115%, rgb(89 193 157 / 45%), transparent 42%),
+    radial-gradient(ellipse at 50% 135%, rgb(157 229 182 / 42%), transparent 48%),
+    radial-gradient(ellipse at 94% 120%, rgb(82 172 119 / 43%), transparent 44%),
+    linear-gradient(110deg, rgb(65 139 115 / 18%), rgb(114 171 131 / 16%));
+  box-shadow:
+    0 12px 36px rgb(0 0 0 / 34%),
+    inset 0 1px rgb(255 255 255 / 12%),
+    inset 0 -1px 1px rgb(206 249 221 / 38%);
+  @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    background-color: var(--day-player-glass, rgb(19 30 24 / 42%));
+    -webkit-backdrop-filter: blur(26px) saturate(145%);
+    backdrop-filter: blur(26px) saturate(145%);
+  }
+  height: var(--desktop-player-bar-height);
+  border-radius: 45px;
+  padding: 10px 20px;
+  --cover-size: 46px;
+  grid-template-columns: var(--cover-size) minmax(0, 1fr) auto minmax(0, 1fr) var(--cover-size);
+  grid-template-areas: "cover track transport actions actions";
+  grid-template-rows: minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 12px;
+  isolation: isolate;
+}
+.player .audio-spectrum {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0.82;
+  border-radius: inherit;
+  z-index: -1;
+}
+.player .player-cover {
+  grid-area: cover;
+  width: var(--cover-size);
+  height: var(--cover-size);
+  border-radius: 50%;
+  animation: player-cover-spin 18s linear infinite paused;
+}
+.player .player-cover.spinning {
+  animation-play-state: running;
+}
+@keyframes player-cover-spin {
+  to { transform: rotate(1turn); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .player .player-cover {
+    animation: none;
+  }
+}
+.now-title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.now-title-line > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.playback-quality {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: var(--day-muted, #66cf78);
+  background: var(--day-selected, #1d3d25);
+  font-size: 10px;
+  line-height: 15px;
+  white-space: nowrap;
+}
+.player .now-title {
+  grid-area: track;
+  max-width: none;
+}
+.player .open-lyrics {
+  position: absolute;
+  grid-column: cover-start / track-end;
+  grid-row: cover-start / cover-end;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+.player .open-lyrics:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+.player .track-details {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 4px;
+}
+.player .track-time {
+  flex-shrink: 0;
+  color: var(--day-muted, rgb(225 240 231 / 64%));
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.player .now-title small {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.player .controls {
+  grid-area: transport;
+  justify-self: center;
+  gap: 6px;
+  margin: 0;
+}
+.player .controls > .icon-button {
+  display: inline-flex;
+}
+.player .controls > :deep(.el-button),
+.player .player-right > :deep(.el-button) {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 32px;
+  padding: 0;
+  margin: 0;
+}
+.player .controls > .play-button {
+  flex-basis: 36px;
+  width: 36px;
+  height: 36px;
+}
+.player .local-indicator {
+  display: none;
+}
+.player .progress {
+  position: absolute;
+  inset: auto 0 0;
+  height: 16px;
+}
+.player::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  border-bottom: 2px solid #a9efc3;
+  clip-path: inset(0 calc(100% - var(--player-progress, 0%)) 0 0);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.player .progress :deep(.el-slider__runway) {
+  height: 16px;
+}
+.player .progress :deep(.el-slider__button-wrapper) {
+  top: -10px;
+}
+.player .progress :deep(.el-slider__runway),
+.player .progress :deep(.el-slider__bar),
+.player .progress :deep(.el-slider__button) {
+  background: transparent;
+}
+.player .progress :deep(.el-slider__button-wrapper:focus-visible .el-slider__button) {
+  background: #a9efc3;
+  outline: 2px solid var(--day-line, #173528);
+}
+.player .player-right {
+  display: flex;
+  grid-area: actions;
+  gap: 4px;
+}
+.player-right :deep(.el-slider) {
+  flex-basis: 48px;
+}
+@media (max-width: 1100px) {
+  .player .player-right > svg,
+  .player .player-right :deep(.el-slider) {
+    display: none;
+  }
+}
+@media (max-width: 700px) {
+  .app-shell > .player {
+    --cover-size: 36px;
+    height: var(--mobile-player-bar-height);
+    padding: 0 10px 8px;
+    grid-template-columns: var(--cover-size) minmax(0, 1fr) auto auto;
+    grid-template-areas: "cover track transport actions";
+    grid-template-rows: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .player .audio-spectrum {
+    inset: auto 0 0;
+    height: 32px;
+  }
+  .player .track-details {
+    display: grid;
+    gap: 2px;
+    margin-top: 2px;
+  }
+  .player .track-time {
+    white-space: nowrap;
+  }
+  .player .controls,
+  .player .player-right {
+    gap: 2px;
+  }
+  .player .controls > .mode-button {
+    display: none;
+  }
+  .player .controls > .play-button {
+    width: 40px;
+    height: 40px;
+    flex-basis: 40px;
+  }
+  .player .player-right > :deep(.el-button) {
+    width: 34px;
+    height: 40px;
+    flex-basis: 34px;
+  }
+}
+@media (max-width: 399px) {
+  .player .controls > .icon-button {
+    display: none;
+  }
+}
+:global(.lyrics-dialog.el-dialog) {
+  height: 100dvh;
+  width: 100%;
+  background: var(--day-surface-soft, #101a14);
+}
+:global(.lyrics-dialog .lyrics-overlay) {
+  display: flex;
+  justify-content: center;
+  padding: 56px 32px 24px;
+  background: radial-gradient(ellipse at 25% 35%, var(--day-selected, #244330), var(--day-surface-soft, #101a14) 75%);
+}
+.lyrics-workspace {
+  width: min(1100px, 100%);
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 400px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 120px;
+  column-gap: 90px;
+  row-gap: 24px;
+}
+.lyrics-workspace .lyric-art {
+  align-self: center;
+  min-width: 0;
+}
+.lyrics-workspace .large-cover {
+  width: min(100%, 320px, 36dvh);
+  margin-bottom: 22px;
+}
+.lyrics-workspace .lyric-art h1 {
+  font-size: 26px;
+  overflow-wrap: anywhere;
+}
+.lyrics-workspace .lyric-art p {
+  margin-top: 8px;
+}
+.lyric-transport {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 24px;
+}
+.lyric-transport > :deep(.el-button) {
+  flex-shrink: 0;
+}
+.lyric-transport > .play-button.el-button {
+  width: 48px;
+  height: 48px;
+}
+.lyric-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--day-muted, #829d8c);
+  margin-top: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.lyric-progress :deep(.el-slider) {
+  flex: 1;
+  min-width: 0;
+}
+.lyrics-column {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+.lyrics-workspace .lyric-scroll {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: min(24dvh, 180px) 12px;
+  gap: 10px;
+}
+.lyrics-workspace .follow-lyrics {
+  right: 20px;
+  bottom: 0;
+}
+.lyric-spectrum {
+  grid-column: 1 / -1;
+  display: block;
+  width: 100%;
+  height: 90px;
+  pointer-events: none;
+}
+:global(.lyrics-dialog .close-lyrics) {
+  position: absolute;
+  right: 24px;
+  top: 18px;
+  z-index: 1;
+}
+@media (max-width: 700px) {
+  :global(.lyrics-dialog .lyrics-overlay) {
+    padding: calc(22px + env(safe-area-inset-top, 0px)) 14px
+      calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+  :global(.lyrics-dialog .close-lyrics) {
+    top: calc(10px + env(safe-area-inset-top, 0px));
+    right: 12px;
+    width: 40px;
+    height: 40px;
+  }
+  .lyrics-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "info"
+      "lyrics"
+      "timeline"
+      "transport";
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    gap: 6px;
+  }
+  .lyrics-workspace .lyric-art {
+    display: contents;
+  }
+  .lyric-info {
+    grid-area: info;
+    min-width: 0;
+    text-align: center;
+  }
+  .lyrics-workspace .large-cover {
+    width: min(15dvh, 96px);
+    margin: 12px auto 12px;
+    border-radius: 50%;
+  }
+  .lyrics-workspace .lyric-art h1 {
+    font-size: 19px;
+  }
+  .lyrics-workspace .lyric-art p {
+    margin-top: 3px;
+    font-size: 13px;
+  }
+  .lyric-info :is(h1, p) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .lyrics-column {
+    grid-area: lyrics;
+  }
+  .lyrics-workspace .lyric-scroll {
+    padding-block: 12px;
+    gap: 2px;
+  }
+  .lyrics-workspace .lyric-scroll :deep(.el-button) {
+    justify-content: center;
+    text-align: center;
+  }
+  .lyric-transport {
+    grid-area: transport;
+    justify-content: space-evenly;
+    gap: 4px;
+    margin: 0;
+  }
+  .lyric-transport > .icon-button.el-button {
+    width: 42px;
+    height: 44px;
+    padding: 0;
+  }
+  .lyric-transport > .play-button.el-button {
+    width: 52px;
+    height: 52px;
+  }
+}
+
+.lyric-volume {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 240px;
+  margin-top: 10px;
+  color: var(--day-muted, #829d8c);
+}
+.lyric-volume > svg {
+  flex-shrink: 0;
+}
+.lyric-volume :deep(.el-slider) {
+  flex: 1;
+  min-width: 0;
+}
+.lyric-volume > span {
+  min-width: 34px;
+  text-align: right;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.lyrics-workspace .lyric-scroll :deep(.el-button) {
+  padding-block: 6px;
+  line-height: 1.6;
+}
+@media (max-width: 700px) {
+  .lyric-volume {
+    max-width: 240px;
+    margin: 4px auto 0;
+  }
+  .lyrics-workspace .lyric-scroll :deep(.el-button) {
+    padding-block: 4px;
+  }
+}
+.lyric-transport .lyric-volume {
+  width: 90px;
+  max-width: 90px;
+  flex: 0 0 90px;
+  gap: 8px;
+  margin: 0 0 0 4px;
+}
+@media (max-width: 700px) {
+  .lyric-transport .lyric-volume {
+    display: none;
+  }
+}
+.lyric-timeline {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.lyric-timeline .lyric-spectrum {
+  width: 100%;
+  height: 90px;
+  flex: 0 0 90px;
+}
+.lyric-timeline .lyric-progress {
+  margin: 0;
+  flex: 1;
+}
+@media (max-width: 700px) {
+  .lyric-timeline {
+    grid-area: timeline;
+  }
+  .lyric-timeline .lyric-spectrum {
+    align-self: center;
+    width: calc(100% + 28px);
+    height: clamp(32px, 7.5dvh, 48px);
+    flex: none;
+  }
+  .lyric-timeline .lyric-progress {
+    flex: none;
+    min-height: 30px;
+  }
+}
+.now-title strong {
+  font-size: 15px;
+}
+.now-title small {
+  font-size: 13px;
+  color: var(--day-muted, #a2b3a8);
+}
+
+.player .now-title small,
+.player .progress,
+.player .player-right,
+.player .icon-button.el-button {
+  color: var(--day-text, rgb(245 249 255 / 78%));
+}
+.player .icon-button.el-button:hover {
+  color: var(--day-text, #fff);
+  background: var(--day-selected, rgb(255 255 255 / 14%));
+}
+.player :deep(.el-slider__runway) {
+  background: var(--day-scrollbar, rgb(255 255 255 / 22%));
+}
+.player :deep(.el-slider__bar),
+.player :deep(.el-slider__button) {
+  background: var(--day-accent-text, #f6f7f9);
+}
+
+@media (max-width: 700px) {
+  .app-shell > .player {
+    left: 0;
+    right: 0;
+    border-radius: 0;
+    bottom: max(0px, env(safe-area-inset-bottom, 0px));
+    width: auto;
+    margin: 0;
+  }
+}
+</style>

@@ -1,0 +1,50 @@
+#!/bin/bash
+set -eu
+export PATH="/var/apps/nodejs_v22/target/bin:$PATH"
+: "${TRIM_APPDEST:?}" "${TRIM_PKGVAR:?}"
+PID_FILE="$TRIM_PKGVAR/app.pid"
+SOCKET_PATH="$TRIM_APPDEST/app.sock"
+mkdir -p "$TRIM_PKGVAR"
+status_app() {
+  [ -f "$PID_FILE" ] || return 1
+  local pid
+  pid=$(cat "$PID_FILE")
+  case "$pid" in ''|*[!0-9]*) return 1;; esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  [ "$(readlink "/proc/$pid/cwd")" = "$TRIM_APPDEST" ] || return 1
+  grep -q 'backend/src/index.js' "/proc/$pid/cmdline" 2>/dev/null
+}
+case "${1:-}" in
+start)
+  if status_app && [ -S "$SOCKET_PATH" ]; then exit 0; fi
+  if status_app; then exit 1; fi
+  if [ -e "$SOCKET_PATH" ] && [ ! -S "$SOCKET_PATH" ]; then exit 1; fi
+  rm -f "$PID_FILE" "$SOCKET_PATH"
+  cd "$TRIM_APPDEST"
+  NODE_ENV=production SHIYIN_DATA_DIR="$TRIM_PKGVAR" SHIYIN_GATEWAY_PREFIX=/app/shiyin SHIYIN_SOCKET_PATH="$SOCKET_PATH" node backend/src/index.js >> "$TRIM_PKGVAR/app.log" 2>&1 &
+  echo "$!" > "$PID_FILE"
+  for ((i=0; i<50; i++)); do
+    if status_app && [ -S "$SOCKET_PATH" ]; then exit 0; fi
+    sleep 0.2
+  done
+  if status_app; then kill -TERM "$(cat "$PID_FILE")"; fi
+  exit 1
+  ;;
+stop)
+  if status_app; then
+    pid=$(cat "$PID_FILE")
+    kill -TERM "$pid"
+    for ((i=0; i<12; i++)); do
+      if ! status_app; then break; fi
+      sleep 1
+    done
+    if status_app; then kill -KILL "$pid"; fi
+  fi
+  rm -f "$PID_FILE" "$SOCKET_PATH"
+  ;;
+status)
+  if status_app && [ -S "$SOCKET_PATH" ]; then exit 0; fi
+  exit 3
+  ;;
+*) exit 1;;
+esac

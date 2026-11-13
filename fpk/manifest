@@ -1,0 +1,15 @@
+appname=shiyin
+version=0.1.12
+changelog=底部播放器在歌名旁显示当前播放音质，标签配色与歌曲列表一致。
+display_name=拾音
+desc=管理 NAS 音乐库，搜索和播放在线歌曲，支持同步歌词、歌单和下载。
+source=thirdparty
+platform=all
+maintainer=拾音
+desktop_uidir=ui
+desktop_applaunchname=shiyin.main
+install_dep_apps=nodejs_v22
+os_min_version=1.1.3100
+ctl_stop=true
+checkport=false
+disable_authorization_path=false
