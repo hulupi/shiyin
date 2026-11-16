@@ -2,6 +2,7 @@
 import { currentPage as page } from "../services/router";
 import { library } from "../stores/library";
 import AppIcon from "./AppIcon.vue";
+import { isAndroidOnline } from "../services/platform";
 defineProps<{ mobileDrawer?: boolean }>();
 const emit = defineEmits<{ navigate: [] }>();
 const menus = [
@@ -14,7 +15,7 @@ const menus = [
   { name: "我的歌单", icon: "☷" },
   { name: "下载管理", icon: "↓" },
   { name: "播放历史", icon: "◷" },
-];
+].filter(item => !isAndroidOnline || !["首页", "本地音乐", "下载管理"].includes(item.name));
 </script>
 <template>
   <aside class="sidebar" :class="{ 'mobile-drawer': mobileDrawer }">

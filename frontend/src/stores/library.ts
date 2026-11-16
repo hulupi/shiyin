@@ -1,3 +1,4 @@
+import { isAndroidOnline } from "../services/platform";
 import { ElMessage } from "element-plus";
 import { navigate } from "../services/router";
 import { h, ref } from "vue";
@@ -21,7 +22,7 @@ export const playbackFallback = ref<Track[]>();
 export const libraryLoading = ref(true);
 export async function refreshLibrary() {
   try {
-    library.value = await api("/library");
+    library.value = await api(isAndroidOnline ? "/library?onlineOnly=1" : "/library");
   } catch (error) {
     reportError(error);
   } finally {
@@ -31,7 +32,7 @@ export async function refreshLibrary() {
 export async function toggleFavorite(track: Track) {
   try {
     const result = await api(
-      "/favorites/" + encodeURIComponent(track.id) + "?feedback=1",
+      "/favorites/" + encodeURIComponent(track.id) + (isAndroidOnline ? "?feedback=1&onlineOnly=1" : "?feedback=1"),
       { method: "POST" },
     );
     library.value.favorites = Array.isArray(result) ? result : result.favorites;

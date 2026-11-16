@@ -62,7 +62,7 @@
   }
   const EVENT_NAMES=Object.freeze({inited:'inited',request:'request',updateAlert:'updateAlert'});
   globalThis.lx = {
-    version:'1.2.0',env:'desktop',currentScriptInfo:__scriptInfo,EVENT_NAMES,request,
+    version:'1.2.0',env:globalThis.__sourceEnvironment || 'desktop',currentScriptInfo:__scriptInfo,EVENT_NAMES,request,
     on(event,handler){if(event===EVENT_NAMES.request && typeof handler==='function')requestHandler=handler;},
     send(event,data){if(event===EVENT_NAMES.inited)__emit(JSON.stringify({kind:'ready',data}));return Promise.resolve();},
     utils:{

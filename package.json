@@ -14,12 +14,19 @@
     "dev": "node scripts/dev/start.mjs",
     "build": "npm run build --workspace frontend",
     "start": "npm run start --workspace backend",
-    "package:fpk": "node scripts/package/fpk.mjs"
+    "package:fpk": "node scripts/package/fpk.mjs",
+    "android:sync": "npm run build --workspace frontend -- --mode android && cap sync android",
+    "android:open": "cap open android"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.6.2",
     "@types/express": "^5.0.6",
     "@types/node": "^22.20.5",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.2",
+    "@capacitor/core": "8.6.2"
   }
 }

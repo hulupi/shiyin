@@ -46,4 +46,6 @@ export function preferredVariant(track: Track): AudioVariant | undefined {
   );
 }
 export const trackCover = (track: Track) =>
-  appUrl(`/api/${track.online ? "online" : "tracks"}/${encodeURIComponent(track.id)}/cover`);
+  import.meta.env.MODE === "android"
+    ? (/^https:\/\//i.test(track.image || "") ? track.image || "" : "")
+    : appUrl(`/api/${track.online ? "online" : "tracks"}/${encodeURIComponent(track.id)}/cover`);

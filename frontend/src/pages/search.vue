@@ -23,9 +23,10 @@ const emit = defineEmits<{
   notify: [message: string];
   navigate: [page: string];
 }>();
+import { isAndroidOnline } from "../services/platform";
 const platforms = [
   { id: "all", name: "全部" },
-  { id: "local", name: "本地" },
+  ...(isAndroidOnline ? [] : [{ id: "local", name: "本地" }]),
   { id: "wy", name: "网易云" },
   { id: "tx", name: "QQ" },
   { id: "kw", name: "酷我" },
@@ -116,7 +117,7 @@ async function search() {
   }
   try {
     const data = await api(
-      `/catalog/search?q=${query}&platform=${platform.value}&page=1&pageSize=${pageSize}`,
+      `/catalog/search?q=${query}&platform=${platform.value}&page=1&pageSize=${pageSize}${isAndroidOnline ? "&onlineOnly=1" : ""}`,
       { signal: active.signal },
     );
     if (controller !== active) return;
@@ -145,7 +146,7 @@ async function loadMore() {
       return;
     }
     const data = await api(
-      `/catalog/search?q=${query}&platform=${platform.value}&page=${nextPage}&pageSize=${pageSize}`,
+      `/catalog/search?q=${query}&platform=${platform.value}&page=${nextPage}&pageSize=${pageSize}${isAndroidOnline ? "&onlineOnly=1" : ""}`,
       { signal: active.signal },
     );
     if (controller !== active) return;

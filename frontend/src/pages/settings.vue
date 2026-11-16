@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { isDesktop } from "../services/platform";
+import { isAndroidOnline, isDesktop } from "../services/platform";
 defineOptions({ inheritAttrs: false });
 import { computed, onMounted, ref, watch } from "vue";
 import { route } from "../services/router";
@@ -20,7 +20,7 @@ import { requestApi as api } from "../services/api";
 import { reportError as message, inform } from "../services/feedback";
 import { confirmAction } from "../services/dialog";
 const appVersion = __APP_VERSION__;
-const sections = [
+const sections = ([
   { id: "directories", label: "存储目录" },
   { id: "appearance", label: "外观" },
   { id: "sources", label: "音源管理" },
@@ -30,7 +30,7 @@ const sections = [
   { id: "logs", label: "日志" },
   { id: "backup", label: "备份与恢复" },
   { id: "about", label: "关于" },
-] as const;
+] as const).filter(section => !isAndroidOnline || !["directories", "downloads", "backup", "about", "logs"].includes(section.id));
 const detail = ref<HTMLElement>();
 const activeSection = computed(() =>
   sections.find(section => section.id === route.value.query.section)?.id ?? sections[0].id,
@@ -104,6 +104,7 @@ let pendingDownloadSave = Promise.resolve();
 const latestDownloadChanges = new Map<keyof DownloadSettings, symbol>();
 
 onMounted(async () => {
+  if (isAndroidOnline) return;
   try {
     const saved: DownloadSettings = await api("/downloads/settings");
     savedDownloads = saved;

@@ -113,7 +113,7 @@ onlineRouter.get('/catalog/search',async(req,res)=>{
   const keyword=String(req.query.q||'').trim();if(!keyword||keyword.length>100)return res.status(400).json({error:'请输入 1–100 字的关键词'});
   const page=Math.max(1,Math.floor(Number(req.query.page)||1));
   const controller=new AbortController();res.once('close',()=>controller.abort());
-  res.json(await searchCatalog(keyword,String(req.query.platform||'all'),page,controller.signal,[50,100,200].includes(Number(req.query.pageSize))?Number(req.query.pageSize):50));
+  res.json(await searchCatalog(keyword,String(req.query.platform||'all'),page,controller.signal,[50,100,200].includes(Number(req.query.pageSize))?Number(req.query.pageSize):50,req.query.onlineOnly==='1'));
 });
 export function matchesLocalTrack(local: Pick<StoredTrack, 'title' | 'artist' | 'duration'>, track: OnlineTrack) {
   const normalize = (value: string) => value.toLowerCase().replace(/[\s、,，&]/g, '');
@@ -156,7 +156,7 @@ onlineRouter.post('/online/:id/resolve',async(req,res)=>{
   if (req.body.skipLocal === true)
     recordPlaybackOutcome(track, req.body.activityId, 'source-failed');
   const activity = sourceActivity('playback', track, quality, req.body.activityId);
-  if (req.body.skipLocal !== true) {
+  if (req.body.skipLocal !== true && req.body.onlineOnly !== true) {
     const boundId = bindings[track.id];
     const candidates = state.tracks
       .filter(local => local.available && (local.id === boundId || matchesLocalTrack(local, track)))

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isAndroidOnline } from "../services/platform";
 import ListSkeleton from "../components/ListSkeleton.vue";
 import {
   computed,
@@ -91,8 +92,8 @@ async function open(id: string) {
       signal: active.signal,
     });
     if (controller !== active || selected.value !== id) return;
-    detail.value = { ...result, count: result.trackIds.length };
-    tracks.value = result.tracks;
+    tracks.value = isAndroidOnline ? result.tracks.filter((track: Track) => track.online) : result.tracks;
+    detail.value = { ...result, count: isAndroidOnline ? tracks.value.length : result.trackIds.length };
   } catch (error) {
     if (!active.signal.aborted && controller === active)
       detailError.value =

@@ -1,8 +1,9 @@
+import { Buffer } from 'node:buffer';
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import { loadRecords, upsertRecord, searchLocalRecords } from '../../db/database.js';
 import { publicTrack, type StoredTrack } from '../../db/store.js';
 import { requestPublic } from '../sources/network.js';
-import { platforms } from '../sources/service.js';
+import { platforms } from '../sources/protocol.js';
 import type { Track, AudioVariant } from '../../contracts.js';
 
 export interface OnlineTrack extends Track { platform:string; songId:string; musicInfo:Record<string,unknown>; image?:string; lyricUrl?:string }
@@ -12,7 +13,7 @@ export async function saveOnlineTrack(track:OnlineTrack){onlineTracks[track.id]=
 export function getOnlineTrack(id:string){const track=searchCache.get(id)||onlineTracks[id];if(!track)throw new Error('歌曲已过期，请重新搜索');return track;}
 export function publicOnlineTrack({musicInfo:_info,image:_image,lyricUrl:_lyric,songId:_songId,...track}:OnlineTrack){
   const variants=track.audioVariants||audioVariants(_info.types);
-  return {...track,audioVariants:variants,hasCover:true,format:variants.at(-1)?.format||'未知',size:variants.at(-1)?.size||0};
+  return {...track,image:_image,audioVariants:variants,hasCover:true,format:variants.at(-1)?.format||'未知',size:variants.at(-1)?.size||0};
 }
 function audioVariants(input:unknown):AudioVariant[] {
   if(!Array.isArray(input))return [];
@@ -128,8 +129,8 @@ async function searchBatch(keyword:string,platform:string,page:number,signal?:Ab
   return {tracks:[...localTracks,...settled.flatMap(item=>item.tracks).map(publicOnlineTrack)],localCount:localTracks.length,platforms:settled.map(({tracks:_tracks,...result})=>result),page};
 }
 
-export async function searchCatalog(keyword:string,platform:string,page:number,signal?:AbortSignal,pageSize=50){
-  const local=searchLocalRecords<StoredTrack>(keyword).map(publicTrack),start=(page-1)*pageSize,end=start+pageSize;
+export async function searchCatalog(keyword:string,platform:string,page:number,signal?:AbortSignal,pageSize=50,onlineOnly=false){
+  const local=onlineOnly ? [] : searchLocalRecords<StoredTrack>(keyword).map(publicTrack),start=(page-1)*pageSize,end=start+pageSize;
   if(platform==='local')return {tracks:local.slice(start,end),localCount:local.length,total:local.length,platforms:[],page,pageSize};
   const first=await searchBatch(keyword,platform,1,signal);
   const counts=first.platforms.map(item=>Math.max(0,Math.floor(item.total))),total=local.length+counts.reduce((sum,n)=>sum+n,0);

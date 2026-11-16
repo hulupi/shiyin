@@ -20,6 +20,7 @@ import {
 } from "./stores/library";
 import { requestApi } from "./services/api";
 import { notify, reportError } from "./services/feedback";
+import { isAndroidOnline } from "./services/platform";
 import AppSidebar from "./components/AppSidebar.vue";
 import AppIcon from "./components/AppIcon.vue";
 import AppTheme from "./components/AppTheme.vue";
@@ -63,10 +64,10 @@ const player = ref<InstanceType<typeof MusicPlayer>>();
 provide(pausePlaybackKey, () => player.value?.pause());
 watch(page, () => { mobileMenuOpen.value = false; });
 function play(track: Track, list: Track[]) {
-  player.value?.play(track, list);
+  if (!isAndroidOnline || track.online) player.value?.play(track, isAndroidOnline ? list.filter(item => item.online) : list);
 }
 function enqueue(track: Track, next = false) {
-  player.value?.enqueue(track, next);
+  if (!isAndroidOnline || track.online) player.value?.enqueue(track, next);
 }
 let timer: ReturnType<typeof setInterval>;
 onMounted(async () => {
@@ -229,6 +230,9 @@ main {
   padding: 0 16px;
   border-bottom: 1px solid var(--day-line, #ffffff12);
   background: var(--day-surface, #101713);
+}
+:global(html.android-online) .mobile-header {
+  background: var(--android-header-background);
 }
 .mobile-header > .app-icon { color: var(--green); }
 .menu-toggle {

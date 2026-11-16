@@ -9,9 +9,9 @@ import { lyrics } from './modules/lyrics/service.js';
 import { playlistRouter, removeDeletedTrack } from './modules/playlists/service.js';
 import { downloadRouter, cancelDirectoryDownloads, downloadOnFavorite } from './modules/downloads/service.js';
 import { clearLocalBindings, onlineRouter, onlineTracks, publicOnlineTrack, getOnlineTrack, saveOnlineTrack } from './modules/playback/online.js';
-import { discoverRouter } from './modules/catalog/discover.js';
+import { discoverRouter } from './modules/catalog/discover-routes.js';
 import { backupRouter } from './modules/backup.js';
-import { chartsRouter } from './modules/catalog/charts.js';
+import { chartsRouter } from './modules/catalog/charts-routes.js';
 const gatewayPrefix = process.env.SHIYIN_GATEWAY_PREFIX || '';
 const socketPath = process.env.SHIYIN_SOCKET_PATH;
 if (process.env.NODE_ENV === 'production' && (!socketPath || gatewayPrefix !== '/app/shiyin')) throw Error('Production requires the fnOS gateway and Unix Socket');
@@ -57,7 +57,12 @@ app.use('/api', playlistRouter);
 app.use('/api', chartsRouter);
 app.use('/api', discoverRouter);
 app.use('/api', downloadRouter);
-app.get('/api/library', (_req,res) => res.json({ ...state, tracks: state.tracks.map(publicTrack), onlineTracks: Object.values(onlineTracks).map(publicOnlineTrack), scan }));
+app.get('/api/library', (req,res) => {
+  const onlineTracksList = Object.values(onlineTracks).map(publicOnlineTrack);
+  if (req.query.onlineOnly !== '1') return res.json({ ...state, tracks: state.tracks.map(publicTrack), onlineTracks: onlineTracksList, scan });
+  const onlineIds = new Set(onlineTracksList.map(track => track.id));
+  res.json({ directories: [], tracks: [], onlineTracks: onlineTracksList, favorites: state.favorites.filter(id => onlineIds.has(id)), history: state.history.filter(id => onlineIds.has(id)), scan: { running: false, scanned: 0, failed: 0, errors: [] } });
+});
 app.post('/api/directories', async (req,res) => { if(scan.running) return res.status(409).json({error:'请等待扫描结束'}); if(typeof req.body.path !== 'string') return res.status(400).json({error:'请输入目录'}); const entry = await addDirectory(req.body.path.trim()); startScan(); res.status(201).json(entry); });
 app.put('/api/directories/:id', async (req, res) => {
   if (scan.running) return res.status(409).json({ error: '请等待扫描结束' });
@@ -85,7 +90,7 @@ app.post('/api/favorites/:id', async (req,res) => {
   const added = !state.favorites.includes(id);
   state.favorites = added ? [...state.favorites,id] : state.favorites.filter(value => value !== id);
   await save();
-  const download = added ? await downloadOnFavorite(track) : undefined;
+  const download = added && req.query.onlineOnly !== '1' ? await downloadOnFavorite(track) : undefined;
   res.json(req.query.feedback === '1' ? {favorites:state.favorites,download} : state.favorites);
 });
 app.post('/api/history/:id', async (req,res) => {

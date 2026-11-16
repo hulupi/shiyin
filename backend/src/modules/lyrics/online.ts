@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { requestPublic } from '../sources/network.js';
 import { sources, requestSource } from '../sources/service.js';
 import type { OnlineTrack } from '../catalog/service.js';

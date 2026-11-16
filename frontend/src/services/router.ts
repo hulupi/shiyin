@@ -1,5 +1,10 @@
 import { computed, ref } from "vue";
 
+import { isAndroidOnline } from "./platform";
+
+const defaultPage = isAndroidOnline ? "榜单" : "本地音乐";
+const unavailable = new Set(isAndroidOnline ? ["首页", "本地音乐", "下载管理"] : []);
+
 export const routeNames: Record<string, string> = {
   首页: "home",
   搜索: "search",
@@ -14,7 +19,7 @@ export const routeNames: Record<string, string> = {
 };
 function readRoute() {
   const url = new URL(
-    window.location.hash.slice(1) || "/library",
+    window.location.hash.slice(1) || "/" + routeNames[defaultPage],
     window.location.origin,
   );
   const parts = url.pathname
@@ -27,9 +32,10 @@ function readRoute() {
         return part;
       }
     });
-  const page =
+  const matchedPage =
     Object.keys(routeNames).find((key) => routeNames[key] === parts[0]) ||
-    "本地音乐";
+    defaultPage;
+  const page = unavailable.has(matchedPage) ? defaultPage : matchedPage;
   return {
     page,
     platform: parts[1] || "wy",
@@ -55,7 +61,8 @@ export function navigate(
   query: Record<string, string> = {},
   replace = false,
 ) {
-  const path = routeNames[page] || "library";
+  if (unavailable.has(page) || !routeNames[page]) page = defaultPage;
+  const path = routeNames[page];
   const detail = ["榜单", "发现歌单"].includes(page)
     ? "/" +
       encodeURIComponent(platform) +
@@ -71,7 +78,7 @@ export function navigate(
 }
 window.addEventListener("hashchange", syncRoute);
 window.addEventListener("popstate", syncRoute);
-if (!window.location.hash) navigate("本地音乐", "wy", "", {}, true);
+if (!window.location.hash) navigate(defaultPage, "wy", "", {}, true);
 export const currentPage = computed({
   get: () => route.value.page,
   set: (page: string) => {

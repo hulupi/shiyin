@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { preferredVariant, variantQualityName } from "../services/music";
+import { setLyricsSystemBars } from "../stores/theme";
+import { isAndroidOnline } from "../services/platform";
 import { appUrl } from "../services/urls";
 import { computed, ref, watch, nextTick, onMounted, onUnmounted } from "vue";
 import type { Track } from "../../../backend/src/contracts";
@@ -65,6 +67,7 @@ let usedSourceId = "";
 let playbackActivityId: string | undefined;
 let playbackActivityReported = false;
 let failedSources: string[] = [];
+let refreshedSource = false;
 let nextQueuedId: string | undefined;
 
 const {
@@ -122,6 +125,9 @@ if (desktopPlayback) {
   onMounted(() => window.addEventListener("beforeunload", savePlayback));
   onUnmounted(() => window.removeEventListener("beforeunload", savePlayback));
 }
+watch(showLyrics, setLyricsSystemBars, { flush: "sync" });
+onUnmounted(() => setLyricsSystemBars(false));
+
 const lyricContainer = ref<HTMLElement>();
 const followLyrics = ref(true);
 function scrollCurrentLyric(smooth = true) {
@@ -268,6 +274,7 @@ async function play(track: Track, replace = true, retry = false, position?: numb
   if (!retry) {
     playbackActivityId = undefined;
     failedSources = [];
+    refreshedSource = false;
     usedSourceId = "";
   }
   const audioReady = prepareSpectrum();
@@ -284,6 +291,7 @@ async function play(track: Track, replace = true, retry = false, position?: numb
             quality: preferredQuality.value,
             exclude: failedSources,
             skipLocal: retry,
+            onlineOnly: isAndroidOnline,
             activityId: playbackActivityId,
           }),
           signal: controller.signal,
@@ -358,9 +366,14 @@ function playbackError() {
   buffering.value = false;
   if (resolving.value || !playbackUrl.value || !current.value) return;
   playing.value = false;
-  if (current.value.online && failedSources.length < 20) {
-    if (usedSourceId && !failedSources.includes(usedSourceId))
-      failedSources.push(usedSourceId);
+  if (isAndroidOnline && current.value.online && usedSourceId && !refreshedSource) {
+    refreshedSource = true;
+    notice.value = "音频连接中断，正在重新取链…";
+    void play(current.value, false, true, progress.value);
+    return;
+  }
+  if (current.value.online && usedSourceId && !failedSources.includes(usedSourceId) && failedSources.length < 20) {
+    failedSources.push(usedSourceId);
     notice.value = "当前文件无法播放，正在尝试下一音源…";
     void play(current.value, false, true);
   } else {
@@ -1876,6 +1889,14 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   height: 90px;
   pointer-events: none;
 }
+:global(html.android-online .lyrics-dialog.el-dialog) {
+  background: var(--android-lyrics-edge);
+}
+:global(html.android-online .lyrics-dialog .lyrics-overlay) {
+  background:
+    linear-gradient(to bottom, var(--android-lyrics-edge), transparent 12%, transparent 88%, var(--android-lyrics-edge)),
+    radial-gradient(ellipse at 25% 35%, var(--day-selected, #244330), var(--android-lyrics-edge) 75%);
+}
 :global(.lyrics-dialog .close-lyrics) {
   position: absolute;
   right: 24px;
@@ -2066,6 +2087,32 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
     bottom: max(0px, env(safe-area-inset-bottom, 0px));
     width: auto;
     margin: 0;
+  }
+}
+@media (max-width: 700px) {
+  :global(html.android-online) .app-shell > .player {
+    bottom: 0;
+    height: calc(var(--mobile-player-bar-height) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    border: 0;
+    background: var(--android-player-background);
+    box-shadow: 0 -4px 20px rgb(0 0 0 / 12%);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  :global(html.android-online) .player .audio-spectrum {
+    bottom: calc(4px + env(safe-area-inset-bottom, 0px));
+  }
+
+  :global(html.android-online) .player .progress {
+    inset: 0 0 auto;
+  }
+
+  :global(html.android-online) .player::after {
+    inset: 0;
+    border-bottom: 0;
+    border-top: 2px solid var(--day-accent-text, #a9efc3);
   }
 }
 </style>

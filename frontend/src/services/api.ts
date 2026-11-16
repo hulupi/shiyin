@@ -1,5 +1,9 @@
 import { appUrl } from "./urls";
 export async function requestApi(url: string, init: RequestInit = {}) {
+  if (import.meta.env.MODE === "android") {
+    const { requestAndroidApi } = await import("../android/api");
+    return requestAndroidApi(url, init);
+  }
   const headers = new Headers(init.headers);
   if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   headers.set('X-Shiyin-Request', '1');

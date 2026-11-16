@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isAndroidOnline } from "../services/platform";
 import { ref } from "vue";
 import { ElMessage } from "element-plus";
 import type { Track } from "../../../backend/src/contracts";
@@ -67,7 +68,7 @@ function remove(){
 
 <template>
   <div class="batch-track-actions">
-    <el-button :disabled="busy || !tracks.length" @click="download">{{ wholeAlbum ? "下载整张专辑" : "批量下载" }}</el-button>
+    <el-button :disabled="busy || !tracks.length" v-if="!isAndroidOnline" @click="download">{{ wholeAlbum ? "下载整张专辑" : "批量下载" }}</el-button>
     <el-button v-if="removeFromPlaylist" :disabled="busy || !tracks.length" @click="removePlaylistTracks">从歌单移除</el-button>
     <el-button v-else :disabled="busy || !tracks.length" @click="choose">加入歌单</el-button>
     <el-button v-if="removeFavorites" :disabled="busy || !tracks.length" @click="remove">取消收藏</el-button>

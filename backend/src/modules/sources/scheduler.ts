@@ -15,6 +15,7 @@ export interface ResolveOptions {
   onFailure?(sourceId: string, quality: string, reason: 'timeout' | 'unavailable'): void;
   totalTimeoutMs?: number;
   perSourceTimeoutMs?: number;
+  cooldownMs?: number;
   signal?: AbortSignal;
   /** Must check that the URL actually opens an allowed audio resource. */
   validate(url: string, signal: AbortSignal): Promise<void>;
@@ -27,6 +28,7 @@ export class SourceScheduler {
   async resolve(sources: SourceAdapter[], song: Omit<SourceRequest, 'quality'>, options: ResolveOptions) {
     const total = AbortSignal.timeout(options.totalTimeoutMs ?? 45000);
     const parent = options.signal ? AbortSignal.any([options.signal, total]) : total;
+    const cooldownMs = options.cooldownMs ?? 60000;
     const errors: { sourceId: string; quality: string; reason: string }[] = [];
     for (const quality of [...new Set(options.qualities)]) {
       for (const source of [...sources].sort((a,b) => a.priority-b.priority)) {
@@ -63,9 +65,11 @@ export class SourceScheduler {
           const reason = signal.aborted ? 'timeout' : 'unavailable';
           options.onFailure?.(source.id, quality, reason);
           errors.push({ sourceId: source.id, quality, reason: reason.toUpperCase() });
-          const failures = (this.failures.get(source.id) ?? 0) + 1;
-          this.failures.set(source.id, failures);
-          if (failures >= 3) this.cooldowns.set(source.id, Date.now() + 60000);
+          if (cooldownMs > 0) {
+            const failures = (this.failures.get(source.id) ?? 0) + 1;
+            this.failures.set(source.id, failures);
+            if (failures >= 3) this.cooldowns.set(source.id, Date.now() + cooldownMs);
+          }
         } finally {
           if (aborted) signal.removeEventListener('abort', aborted);
           controller.abort();

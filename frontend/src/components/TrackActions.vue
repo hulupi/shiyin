@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isAndroidOnline } from "../services/platform";
 import { appUrl } from "../services/urls";
 import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
@@ -67,7 +68,7 @@ const entries = computed(() => [
   { id: "favorite", name: "收藏", icon: "heart" },
   { id: "playlist", name: "加入歌单", icon: "我的歌单" },
   { id: "details", name: "详情", icon: "music" },
-  {
+  ...(!isAndroidOnline ? [{
     id: "download",
     name: props.downloadUrl
       ? "下载文件"
@@ -75,7 +76,7 @@ const entries = computed(() => [
         ? "下载"
         : "下载文件",
     icon: "下载管理",
-  },
+  }] : []),
   ...(!props.track.online
     ? [{ id: "deleteFile", name: "删除文件", icon: "trash" }]
     : []),
