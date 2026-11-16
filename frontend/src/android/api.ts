@@ -5,6 +5,7 @@ import { enrichOnlineTrack, getOnlineTrack, onlineTracks, publicOnlineTrack, sav
 import { getOnlineLyrics } from '../../../backend/src/modules/lyrics/online';
 import { SourceScheduler } from '../../../backend/src/modules/sources/scheduler';
 import { prepareAudio } from './network';
+import { changeAndroidFavorites, getAndroidFavorites } from './favorites';
 import { editSource, importSource, listSources, requestSource, saveSourceSettings, sourceSettings, sources } from './sources';
 import { read, write } from './storage';
 
@@ -45,23 +46,29 @@ async function resolve(id: string, quality: string, exclude: string[], signal?: 
     validate: async url => {
       const parsed = new URL(url);
       gotLink = true;
-      if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
         unsupportedProtocol = true;
         throw new Error('无效或不支持的音频地址');
       }
-      audioUrl = await prepareAudio(url);
+      try {
+        audioUrl = await prepareAudio(url);
+      } catch (error) {
+        if ((error as Error)?.message === "该 HTTP 音频域名尚未开放") unsupportedProtocol = true;
+        throw error;
+      }
     },
   }).catch(error => {
     signal?.throwIfAborted();
     if (error instanceof DOMException && error.name === 'TimeoutError') timedOut = true;
     if (gotLink) {
       throw new Error(unsupportedProtocol
-        ? '音源返回了链接，但音频无法连接。当前安卓端支持 HTTPS 音频'
+        ? '音源返回的地址无效，或该 HTTP 音频域名尚未开放'
         : '已取得音频链接，但手机未能连接音频服务器，请稍后重试');
     }
     throw new Error(timedOut ? '音源取链超时，请检查手机网络或代理后重试' : '音源未能解析这首歌，请尝试其他歌曲或音质');
   });
   signal?.throwIfAborted();
+  await saveOnlineTrack(track);
   return { mode: 'online', sourceId: resolved.sourceId, quality: resolved.quality,
     sourceName: sources.find(source => source.id === resolved.sourceId)?.name || '在线音源',
     audioUrl, lyricUrl: '/online/' + encodeURIComponent(id) + '/lyrics' };
@@ -116,7 +123,7 @@ export async function requestAndroidApi(path: string, init: RequestInit) {
   switch (resource) {
     case 'library':
       return { directories: [], tracks: [], onlineTracks: Object.values(onlineTracks).map(publicOnlineTrack),
-        favorites: read<string[]>('favorites', []), history: read<string[]>('history', []),
+        favorites: await getAndroidFavorites(), history: read<string[]>('history', []),
         scan: { running: false, scanned: 0, failed: 0, errors: [] } };
     case 'charts':
       return action ? chartTracks(id, action, page, refresh) : { charts: await listCharts(id, refresh) };
@@ -170,20 +177,21 @@ export async function requestAndroidApi(path: string, init: RequestInit) {
       if (action === 'lyrics') return { text: await getOnlineLyrics(getOnlineTrack(id), signal) };
       if (action === 'details') return publicOnlineTrack(await enrichOnlineTrack(getOnlineTrack(id), signal));
       break;
-    case 'favorites':
+    case 'favorites': {
+      if (id === 'remove-batch') return changeAndroidFavorites({ removeIds: body.trackIds });
+      await saveOnlineTrack(getOnlineTrack(id));
+      const favorites = await changeAndroidFavorites({ toggleId: id });
+      return query.has('feedback') ? { favorites } : favorites;
+    }
     case 'history': {
-      const current = read<string[]>(resource, []);
-      let updated: string[];
-      if (resource === 'history' && method === 'DELETE') updated = [];
-      else if (id === 'remove-batch') updated = current.filter(id => !body.trackIds.includes(id));
-      else {
+      const current = read<string[]>('history', []);
+      let updated: string[] = [];
+      if (method !== 'DELETE') {
         await saveOnlineTrack(getOnlineTrack(id));
-        updated = resource === 'favorites' && current.includes(id)
-          ? current.filter(item => item !== id)
-          : [id, ...current.filter(item => item !== id)];
+        updated = [id, ...current.filter(item => item !== id)];
       }
-      write(resource, updated);
-      return query.has('feedback') ? { favorites: updated } : updated;
+      write('history', updated);
+      return updated;
     }
     case 'playlists':
       return playlistRequest(method, id, action, detail, body);

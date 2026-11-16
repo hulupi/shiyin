@@ -1,3 +1,4 @@
+import { androidArtworkUrl } from "../android/artwork";
 import { appUrl } from "./urls";
 import type {
   AudioVariant,
@@ -47,5 +48,5 @@ export function preferredVariant(track: Track): AudioVariant | undefined {
 }
 export const trackCover = (track: Track) =>
   import.meta.env.MODE === "android"
-    ? (/^https:\/\//i.test(track.image || "") ? track.image || "" : "")
+    ? androidArtworkUrl(track.image || "")
     : appUrl(`/api/${track.online ? "online" : "tracks"}/${encodeURIComponent(track.id)}/cover`);

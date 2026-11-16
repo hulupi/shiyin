@@ -1,7 +1,7 @@
 import { registerPlugin } from '@capacitor/core';
 import { Buffer } from 'buffer';
 
-const legacyCatalogHosts = new Set(["c.y.qq.com","kbangserver.kuwo.cn","nplserver.kuwo.cn","qukudata.kuwo.cn","search.kuwo.cn","songsearch.kugou.com","wapi.kuwo.cn"]);
+const legacyCatalogHosts = new Set(["c.y.qq.com","kbangserver.kuwo.cn","nmobi.kuwo.cn","nplserver.kuwo.cn","qukudata.kuwo.cn","search.kuwo.cn","songsearch.kugou.com","wapi.kuwo.cn"]);
 
 const bridge = registerPlugin<{
   request(options: {

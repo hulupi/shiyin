@@ -2,6 +2,7 @@ package app.shiyin.music;
 
 import android.content.ComponentName;
 import android.net.Uri;
+import android.os.Bundle;
 import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
 import androidx.media3.common.C;
@@ -64,7 +65,9 @@ public final class ShiyinPlayback extends Plugin {
 
     private static MediaItem mediaItem(PluginCall call) throws IOException {
         Uri uri = ShiyinNetwork.mediaUri(call.getString("path", ""));
-        MediaMetadata.Builder metadata = new MediaMetadata.Builder()
+        Bundle extras = new Bundle();
+        extras.putString(ShiyinPlaybackService.TRACK_ID, call.getString("trackId", ""));
+        MediaMetadata.Builder metadata = new MediaMetadata.Builder().setExtras(extras)
             .setTitle(call.getString("title", "")).setArtist(call.getString("artist", ""))
             .setAlbumTitle(call.getString("album", ""));
         String artwork = call.getString("artwork", "");
@@ -86,20 +89,35 @@ public final class ShiyinPlayback extends Plugin {
         });
     }
 
-    @PluginMethod public void setNext(PluginCall call) {
-        MediaItem upcoming;
-        try { upcoming = call.getString("path") == null ? null : mediaItem(call); }
-        catch (IOException error) { call.reject("下一首音频地址已失效"); return; }
+    @PluginMethod public void clearUpcoming(PluginCall call) {
         withPlayer(call, player -> {
             MediaItem current = player.getCurrentMediaItem();
-            if (current != null && current.mediaId.equals(call.getString("currentId"))) {
-                int previous = player.getCurrentMediaItemIndex();
-                if (previous > 0) player.removeMediaItems(0, previous);
+            boolean applied = current != null && current.mediaId.equals(call.getString("currentId"));
+            if (applied) {
                 int index = player.getCurrentMediaItemIndex() + 1;
                 if (index < player.getMediaItemCount()) player.removeMediaItems(index, player.getMediaItemCount());
-                if (upcoming != null) player.addMediaItem(upcoming);
             }
-            call.resolve();
+            JSObject result = new JSObject();
+            result.put("applied", applied);
+            call.resolve(result);
+        });
+    }
+
+    @PluginMethod public void append(PluginCall call) {
+        MediaItem upcoming;
+        try { upcoming = mediaItem(call); }
+        catch (IOException error) { call.reject("下一首音频地址已失效"); return; }
+        withPlayer(call, player -> {
+            int count = player.getMediaItemCount();
+            boolean applied = count > 0 && player.getMediaItemAt(count - 1).mediaId.equals(call.getString("afterId"));
+            if (applied) {
+                int previous = player.getCurrentMediaItemIndex();
+                if (previous > 0) player.removeMediaItems(0, previous);
+                player.addMediaItem(upcoming);
+            }
+            JSObject result = new JSObject();
+            result.put("applied", applied);
+            call.resolve(result);
         });
     }
 

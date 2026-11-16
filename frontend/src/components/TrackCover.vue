@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, inject, ref, watch } from "vue";
+import { computed, inject, onMounted, onUnmounted, ref } from "vue";
 import type { Track } from "../../../backend/src/contracts";
-import { trackCover } from "../services/music";
+import { useTrackArtwork } from "../stores/useTrackArtwork";
 import AppIcon from "./AppIcon.vue";
 import { pausePlaybackKey, playbackLoadingId } from "../stores/playbackControl";
 const props = defineProps<{
@@ -23,15 +23,29 @@ function handleClick(event: MouseEvent) {
   if (canPause.value) pausePlayback?.();
   else emit("play");
 }
-const failed = ref(false);
-watch(
-  () => props.track.id,
-  () => (failed.value = false),
-);
+const coverRoot = ref<HTMLElement>();
+const visible = ref(false);
+const { artwork, artworkError } = useTrackArtwork(() => props.track, () => visible.value);
+let observer: IntersectionObserver | undefined;
+onMounted(() => {
+  if (!coverRoot.value || !("IntersectionObserver" in window)) {
+    visible.value = true;
+    return;
+  }
+  observer = new IntersectionObserver(entries => {
+    if (entries.some(entry => entry.isIntersecting)) {
+      visible.value = true;
+      observer?.disconnect();
+    }
+  }, { rootMargin: "80px" });
+  observer.observe(coverRoot.value);
+});
+onUnmounted(() => observer?.disconnect());
 </script>
 <template>
   <component
     :is="playable ? 'button' : 'div'"
+    ref="coverRoot"
     class="cover"
     :class="{ 'cover-playable': playable, 'cover-playback-active': playback && (loading || playing) }"
     :type="playable ? 'button' : undefined"
@@ -41,11 +55,11 @@ watch(
     @dblclick="playable && $event.stopPropagation()"
   >
     <img
-      v-if="(track.online || track.hasCover) && !failed"
-      :src="trackCover(track)"
+      v-if="artwork"
+      :src="artwork"
       :alt="track.title + ' 封面'"
       loading="lazy"
-      @error="failed = true"
+      @error="artworkError"
     /><AppIcon v-else name="music" :size="23" />
     <span v-if="playback" class="cover-playback">
       <span v-if="loading" role="status" aria-label="正在加载"><AppIcon name="refresh" :size="17" spinning /></span>

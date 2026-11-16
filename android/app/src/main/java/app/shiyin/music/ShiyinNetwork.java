@@ -1,6 +1,7 @@
 package app.shiyin.music;
 
 import android.net.Uri;
+import android.security.NetworkSecurityPolicy;
 import android.util.Base64;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -36,15 +37,20 @@ public final class ShiyinNetwork extends Plugin {
     private static final int MAX_BYTES = 4 * 1024 * 1024;
     private static final ExecutorService IO = Executors.newFixedThreadPool(6);
     private static final Map<String, HttpUrl> AUDIO = new LinkedHashMap<>();
-    private static final OkHttpClient HTTP = new OkHttpClient.Builder()
+    private static final OkHttpClient NETWORK = new OkHttpClient.Builder()
         .dns(ShiyinNetwork::resolvePublic)
         .proxy(Proxy.NO_PROXY)
         .followRedirects(false)
-        .addInterceptor(ShiyinNetwork::followPublicRedirects)
         .callTimeout(25, TimeUnit.SECONDS)
         .build();
-    private static final OkHttpClient PROBE = HTTP.newBuilder().callTimeout(5000, TimeUnit.MILLISECONDS).build();
-    private static final OkHttpClient MEDIA = HTTP.newBuilder().callTimeout(0, TimeUnit.SECONDS).build();
+    private static final OkHttpClient HTTPS = NETWORK.newBuilder()
+        .addInterceptor(chain -> followPublicRedirects(chain, false))
+        .build();
+    private static final OkHttpClient MEDIA = NETWORK.newBuilder()
+        .addInterceptor(chain -> followPublicRedirects(chain, true))
+        .callTimeout(0, TimeUnit.SECONDS)
+        .build();
+    private static final OkHttpClient PROBE = MEDIA.newBuilder().callTimeout(5000, TimeUnit.MILLISECONDS).build();
 
     private static List<InetAddress> resolvePublic(String host) throws UnknownHostException {
         List<InetAddress> addresses = Dns.SYSTEM.lookup(host);
@@ -63,11 +69,14 @@ public final class ShiyinNetwork extends Plugin {
         return addresses;
     }
 
-    private static HttpUrl publicUrl(String value) throws IOException {
+    private static HttpUrl publicUrl(String value, boolean media) throws IOException {
         HttpUrl url = value == null ? null : HttpUrl.parse(value);
-        if (url == null || !url.isHttps() || !url.username().isEmpty() || !url.password().isEmpty()
+        if (url == null || !url.username().isEmpty() || !url.password().isEmpty()
                 || url.host().matches("[0-9.]+") || url.host().contains(":")) {
-            throw new IOException("需要公开的 HTTPS 地址");
+            throw new IOException("需要公开的音频或接口地址");
+        }
+        if (!url.isHttps() && (!media || !NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted(url.host()))) {
+            throw new IOException("该 HTTP 音频域名尚未开放");
         }
         return url;
     }
@@ -83,10 +92,10 @@ public final class ShiyinNetwork extends Plugin {
         }
     }
 
-    private static Response followPublicRedirects(Interceptor.Chain chain) throws IOException {
+    private static Response followPublicRedirects(Interceptor.Chain chain, boolean media) throws IOException {
         Request request = chain.request();
         for (int i = 0; i < 5; i++) {
-            publicUrl(request.url().toString());
+            publicUrl(request.url().toString(), media);
             Response response = chain.proceed(request);
             String location = response.header("Location");
             int code = response.code();
@@ -95,9 +104,9 @@ public final class ShiyinNetwork extends Plugin {
             }
             response.close();
             HttpUrl target = request.url().resolve(location);
-            target = publicUrl(target == null ? null : target.toString());
+            target = publicUrl(target == null ? null : target.toString(), media);
             Request.Builder next = request.newBuilder().url(target);
-            if (!target.host().equals(request.url().host()) || target.port() != request.url().port()) {
+            if (!target.host().equals(request.url().host()) || target.port() != request.url().port() || !target.scheme().equals(request.url().scheme())) {
                 next.removeHeader("Authorization").removeHeader("Cookie");
             }
             if (code == 303 || ((code == 301 || code == 302) && request.method().equals("POST"))) next.get();
@@ -110,7 +119,7 @@ public final class ShiyinNetwork extends Plugin {
     public void request(PluginCall call) {
         IO.execute(() -> {
             try {
-                Request.Builder builder = new Request.Builder().url(publicUrl(call.getString("url")))
+                Request.Builder builder = new Request.Builder().url(publicUrl(call.getString("url"), false))
                     .header("User-Agent", "Mozilla/5.0");
                 JSObject headers = call.getObject("headers", new JSObject());
                 headers.keys().forEachRemaining(name -> {
@@ -126,7 +135,7 @@ public final class ShiyinNetwork extends Plugin {
                 }
                 int limit = Math.max(1, Math.min(MAX_BYTES, call.getInt("limit", MAX_BYTES)));
                 int timeout = Math.max(1000, Math.min(25000, call.getInt("timeout", 25000)));
-                OkHttpClient client = HTTP.newBuilder().callTimeout(timeout, TimeUnit.MILLISECONDS).build();
+                OkHttpClient client = HTTPS.newBuilder().callTimeout(timeout, TimeUnit.MILLISECONDS).build();
                 try (Response response = client.newCall(builder.method(method, data).build()).execute()) {
                     JSObject responseHeaders = new JSObject();
                     for (String name : response.headers().names()) {
@@ -163,7 +172,7 @@ public final class ShiyinNetwork extends Plugin {
 
     private static void probeAudio(PluginCall call) {
         try {
-            HttpUrl url = publicUrl(call.getString("url"));
+            HttpUrl url = publicUrl(call.getString("url"), true);
             Request request = new Request.Builder().url(url)
                 .header("User-Agent", "Mozilla/5.0")
                 .header("Range", "bytes=0-1")

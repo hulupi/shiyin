@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { preferredVariant, trackCover, variantQualityName } from "../services/music";
+import { cachedKuwoArtwork } from "../android/artwork";
+import { useTrackArtwork } from "../stores/useTrackArtwork";
 import { setLyricsSystemBars } from "../stores/theme";
 import { androidPlayback, type AndroidPlaybackItem, type AndroidPlaybackState } from "../android/playback";
-import { androidBackEvent } from "../services/router";
 import { isAndroidOnline } from "../services/platform";
 import { appUrl } from "../services/urls";
 import { computed, ref, watch, nextTick, onMounted, onUnmounted } from "vue";
@@ -84,11 +85,10 @@ const playbackMode = ref("列表循环");
 let nativeId = "";
 let nativeFinished = "";
 let prefetchController: AbortController | undefined;
-let preparedNext: { item: AndroidPlaybackItem; track: Track; result: OnlinePlayback } | undefined;
-const failedArtwork = ref("");
-const artwork = computed(() => current.value?.hasCover ? trackCover(current.value) : "");
-const visibleArtwork = computed(() => artwork.value && artwork.value !== failedArtwork.value);
-watch(current, () => { failedArtwork.value = ""; });
+const queuedAheadLimit = 5;
+const preparedTracks: { item: AndroidPlaybackItem; track: Track; result: OnlinePlayback }[] = [];
+let clearingUpcoming = false;
+const { artwork, artworkError } = useTrackArtwork(() => current.value);
 
 interface OnlinePlayback {
   audioUrl: string;
@@ -103,8 +103,8 @@ interface OnlinePlayback {
 
 function nativeItem(track: Track, path: string): AndroidPlaybackItem {
   return {
-    id: crypto.randomUUID(), path, title: track.title, artist: track.artist,
-    album: track.album, artwork: trackCover(track) || undefined,
+    id: crypto.randomUUID(), trackId: track.id, path, title: track.title, artist: track.artist,
+    album: track.album, artwork: cachedKuwoArtwork(track.id) || trackCover(track) || undefined,
   };
 }
 
@@ -133,41 +133,89 @@ function runNative(action: Parameters<typeof androidPlayback.control>[0]["action
 function cancelPrefetch() {
   prefetchController?.abort();
   prefetchController = undefined;
-  preparedNext = undefined;
+}
+
+function prefetchOrder(after: Track) {
+  const list = queue.value;
+  const index = list.findIndex(track => track.id === after.id);
+  const tail = list.slice(index + 1);
+  const wrap = playbackMode.value !== "顺序播放" ? list.slice(0, index + 1) : [];
+  const remaining = playbackMode.value === "随机播放" ? [...list] : [...tail, ...wrap];
+  if (playbackMode.value === "随机播放") {
+    for (let i = remaining.length - 1; i > 0; i--) {
+      const swap = Math.floor(Math.random() * (i + 1));
+      [remaining[i], remaining[swap]] = [remaining[swap], remaining[i]];
+    }
+  }
+  const forced = list.find(track => track.id === nextQueuedId);
+  const seen = new Set(preparedTracks.map(entry => entry.track.id));
+  if (current.value && list.length > 1) seen.add(current.value.id);
+  return (forced ? [forced, ...remaining] : remaining).filter(track => {
+    if (!track.online || !track.available || seen.has(track.id)) return false;
+    seen.add(track.id);
+    return true;
+  });
 }
 
 async function prepareNext() {
-  const owner = nativeId;
-  const track = current.value;
-  if (!owner || !track || resolving.value || !playing.value) return;
+  if (!nativeId || !current.value || resolving.value || !playing.value || prefetchController || clearingUpcoming) return;
   const repeat = playbackMode.value === "单曲循环" && !nextQueuedId;
   runNative("repeat", undefined, repeat);
-  const nextTrack = repeat ? undefined : pickNext(1, true);
-  if (nextTrack?.id === preparedNext?.track.id && preparedNext) return;
-  cancelPrefetch();
+  if (repeat || preparedTracks.length >= queuedAheadLimit) return;
+
+  const tail = preparedTracks.at(-1);
+  let tailId = tail?.item.id ?? nativeId;
   const controller = new AbortController();
   prefetchController = controller;
   try {
-    await androidPlayback.setNext({ currentId: owner });
-    if (!nextTrack || controller.signal.aborted) return;
-    const result = await requestOnlinePlayback(nextTrack, controller.signal);
-    if (controller.signal.aborted || nativeId !== owner) return;
-    const item = nativeItem(nextTrack, appUrl(result.audioUrl));
-    preparedNext = { item, track: nextTrack, result };
-    await androidPlayback.setNext({ currentId: owner, ...item });
-  } catch {
-    if (prefetchController === controller) preparedNext = undefined;
+    const order = prefetchOrder(tail?.track ?? current.value);
+    for (const track of order.slice(0, queuedAheadLimit + 3)) {
+      if (controller.signal.aborted || preparedTracks.length >= queuedAheadLimit) break;
+      let result: OnlinePlayback;
+      try { result = await requestOnlinePlayback(track, controller.signal); }
+      catch { continue; }
+      if (controller.signal.aborted) break;
+
+      const item = nativeItem(track, appUrl(result.audioUrl));
+      const entry = { item, track, result };
+      preparedTracks.push(entry);
+      const applied = await androidPlayback.append({ afterId: tailId, ...item })
+        .then(response => response.applied).catch(() => false);
+      if (!applied) {
+        const index = preparedTracks.indexOf(entry);
+        if (index >= 0) preparedTracks.splice(index, 1);
+        break;
+      }
+      tailId = item.id;
+    }
   } finally {
     if (prefetchController === controller) prefetchController = undefined;
+  }
+}
+
+async function refreshUpcoming() {
+  cancelPrefetch();
+  const owner = nativeId;
+  if (!owner || clearingUpcoming) return;
+  clearingUpcoming = true;
+  try {
+    const { applied } = await androidPlayback.clearUpcoming({ currentId: owner });
+    if (applied && nativeId === owner) preparedTracks.length = 0;
+  } catch (error) {
+    message(error);
+  } finally {
+    clearingUpcoming = false;
+    void prepareNext();
   }
 }
 
 function applyNativeState(state: AndroidPlaybackState) {
   if (!state.id || !nativeId) return;
   if (state.id !== nativeId) {
-    if (state.id !== preparedNext?.item.id) return;
-    const { track, result, item } = preparedNext;
-    cancelPrefetch();
+    const index = preparedTracks.findIndex(entry => entry.item.id === state.id);
+    if (index < 0) return;
+    const { track, result, item } = preparedTracks[index];
+    preparedTracks.splice(0, index + 1);
     if (nextQueuedId === track.id) nextQueuedId = undefined;
     nativeId = item.id;
     playing.value = false;
@@ -199,17 +247,23 @@ function applyNativeState(state: AndroidPlaybackState) {
 }
 
 if (isAndroidOnline) {
-  watch([queue, playbackMode], () => { void prepareNext(); }, { deep: true });
+  watch([queue, playbackMode], () => { void refreshUpcoming(); }, { deep: true });
   onMounted(() => {
     const listening = androidPlayback.addListener("state", applyNativeState);
     void listening.catch(message);
     const timer = setInterval(() => {
       if (nativeId && !document.hidden && (playing.value || buffering.value)) runNative("state");
     }, 500);
-    const onVisibility = () => { if (!document.hidden) runNative("state"); };
+    const refill = setInterval(() => {
+      if (preparedTracks.length < 2) void prepareNext();
+    }, 20000);
+    const onVisibility = () => {
+      if (!document.hidden) { runNative("state"); void prepareNext(); }
+    };
     document.addEventListener("visibilitychange", onVisibility);
     removeNativeListener = () => {
       clearInterval(timer);
+      clearInterval(refill);
       document.removeEventListener("visibilitychange", onVisibility);
       void listening.then(listener => listener.remove()).catch(() => {});
       cancelPrefetch();
@@ -266,14 +320,6 @@ if (desktopPlayback) {
   onUnmounted(() => window.removeEventListener("beforeunload", savePlayback));
 }
 watch(showLyrics, open => { if (open) setLyricsSystemBars(true); }, { flush: "sync" });
-function closePlayerOverlay(event: Event) {
-  if (!showLyrics.value && !showQueue.value) return;
-  event.preventDefault();
-  if (showQueue.value) showQueue.value = false;
-  else showLyrics.value = false;
-}
-onMounted(() => window.addEventListener(androidBackEvent, closePlayerOverlay));
-onUnmounted(() => window.removeEventListener(androidBackEvent, closePlayerOverlay));
 onUnmounted(() => setLyricsSystemBars(false));
 
 const lyricContainer = ref<HTMLElement>();
@@ -410,6 +456,7 @@ async function play(track: Track, replace = true, retry = false, position?: numb
   const request = ++lyricRequest;
   if (isAndroidOnline) {
     cancelPrefetch();
+    preparedTracks.length = 0;
     runNative("pause");
     nativeId = "";
   }
@@ -611,11 +658,11 @@ function next(delta = 1, ended = false) {
     else if (audio.value) void mediaControl.play(audio.value).catch(message);
     return;
   }
-  if (isAndroidOnline && !ended && delta === 1 && preparedNext) {
+  if (isAndroidOnline && !ended && delta === 1 && preparedTracks.length) {
     runNative("next");
     return;
   }
-  const track = delta === 1 && preparedNext ? preparedNext.track : pickNext(delta, ended);
+  const track = (delta === 1 ? preparedTracks[0]?.track : undefined) ?? pickNext(delta, ended);
   if (!track) return;
   if (delta === 1 && track.id === nextQueuedId) nextQueuedId = undefined;
   void play(track, false);
@@ -739,9 +786,9 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
           <div class="lyric-info">
             <div class="large-cover">
               <img
-                v-if="visibleArtwork"
+                v-if="artwork"
                 :src="artwork"
-                @error="failedArtwork = artwork"
+                @error="artworkError"
                 alt="歌曲封面"
               /><AppIcon v-else name="music" :size="24" />
               <span v-if="resolving" class="player-cover-loading" role="status" aria-label="正在加载歌曲">
@@ -865,7 +912,7 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
       aria-hidden="true"
     ></canvas>
     <div class="cover player-cover" :class="{ spinning: playing }">
-      <img v-if="visibleArtwork" :src="artwork" alt="" @error="failedArtwork = artwork" /><AppIcon
+      <img v-if="artwork" :src="artwork" alt="" @error="artworkError" /><AppIcon
         v-else
         name="music"
         :size="24"
@@ -2052,10 +2099,10 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   height: 90px;
   pointer-events: none;
 }
-:global(html.android-online .lyrics-dialog.el-dialog) {
+:global(html.android .lyrics-dialog.el-dialog) {
   background: var(--android-lyrics-edge);
 }
-:global(html.android-online .lyrics-dialog .lyrics-overlay) {
+:global(html.android .lyrics-dialog .lyrics-overlay) {
   background:
     linear-gradient(to bottom, var(--android-lyrics-edge), transparent 12%, transparent 88%, var(--android-lyrics-edge)),
     radial-gradient(ellipse at 25% 35%, var(--day-selected, #244330), var(--android-lyrics-edge) 75%);
@@ -2253,7 +2300,7 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   }
 }
 @media (max-width: 700px) {
-  :global(html.android-online .app-shell > .player) {
+  :global(html.android .app-shell > .player) {
     bottom: 0;
     height: calc(var(--mobile-player-bar-height) + env(safe-area-inset-bottom, 0px));
     padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
@@ -2264,15 +2311,15 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
     backdrop-filter: none;
   }
 
-  :global(html.android-online .player .audio-spectrum) {
+  :global(html.android .player .audio-spectrum) {
     bottom: calc(4px + env(safe-area-inset-bottom, 0px));
   }
 
-  :global(html.android-online .player .progress) {
+  :global(html.android .player .progress) {
     inset: 0 0 auto;
   }
 
-  :global(html.android-online .player::after) {
+  :global(html.android .player::after) {
     inset: 0;
     border-bottom: 0;
     border-top: 2px solid var(--day-accent-text, #a9efc3);

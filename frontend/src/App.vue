@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { App as NativeApp } from "@capacitor/app";
+import { onAndroidFavoritesChanged } from "./android/favorites";
 import {
   computed,
   defineAsyncComponent,
@@ -12,7 +13,7 @@ import {
 } from "vue";
 import type { Component } from "vue";
 import type { Track } from "../../backend/src/contracts";
-import { backWithinApp, currentPage, routeNames } from "./services/router";
+import { backFromAndroidDetail, currentPage, routeNames } from "./services/router";
 import {
   library,
   preferredQuality,
@@ -31,14 +32,22 @@ const page = currentPage;
 const mobileMenuOpen = ref(false);
 if (isAndroidOnline) {
   let subscription: ReturnType<typeof NativeApp.addListener> | undefined;
+  let favoritesSubscription: ReturnType<typeof onAndroidFavoritesChanged> | undefined;
+  const refreshFavoritesOnResume = () => { if (!document.hidden) void refreshLibrary(); };
   onMounted(() => {
-    subscription = NativeApp.addListener("backButton", ({ canGoBack }) => {
-      if (mobileMenuOpen.value) mobileMenuOpen.value = false;
-      else if (!backWithinApp(canGoBack)) void NativeApp.minimizeApp().catch(reportError);
+    subscription = NativeApp.addListener("backButton", () => {
+      if (!backFromAndroidDetail()) void NativeApp.minimizeApp().catch(reportError);
     });
     void subscription.catch(reportError);
+    favoritesSubscription = onAndroidFavoritesChanged(() => { void refreshLibrary(); });
+    void favoritesSubscription.catch(reportError);
+    document.addEventListener("visibilitychange", refreshFavoritesOnResume);
   });
-  onUnmounted(() => { void subscription?.then(handle => handle.remove()).catch(() => {}); });
+  onUnmounted(() => {
+    void subscription?.then(handle => handle.remove()).catch(() => {});
+    void favoritesSubscription?.then(handle => handle.remove()).catch(() => {});
+    document.removeEventListener("visibilitychange", refreshFavoritesOnResume);
+  });
 }
 const mobileViewport = window.matchMedia("(max-width: 700px)");
 const isMobile = ref(mobileViewport.matches);
@@ -243,7 +252,7 @@ main {
   border-bottom: 1px solid var(--day-line, #ffffff12);
   background: var(--day-surface, #101713);
 }
-:global(html.android-online .mobile-header) {
+:global(html.android .mobile-header) {
   background: var(--android-header-background);
 }
 .mobile-header > .app-icon { color: var(--green); }

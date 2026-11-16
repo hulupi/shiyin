@@ -45,7 +45,6 @@ if (isAndroidOnline) {
     const player = light ? "#eff5ef" : "#161e19";
     const lyrics = light ? "#eff5ef" : "#101a14";
     const html = document.documentElement;
-    html.classList.add("android-online");
     html.style.setProperty("--android-header-background", header);
     html.style.setProperty("--android-player-background", player);
     html.style.setProperty("--android-lyrics-edge", lyrics);

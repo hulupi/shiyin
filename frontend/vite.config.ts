@@ -8,7 +8,8 @@ const { version } = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ) as { version: string };
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  build: mode === 'android' ? { target: 'chrome83', cssTarget: 'chrome83' } : undefined,
   define: { __APP_VERSION__: JSON.stringify(version) },
   plugins: [vue()],
   resolve: {
@@ -46,4 +47,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

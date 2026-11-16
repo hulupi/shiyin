@@ -47,9 +47,18 @@ export const route = ref(readRoute());
 const rememberedPages = new Set(["榜单", "发现歌单", "我的歌单"]);
 const lastRoutes = new Map<string, ReturnType<typeof readRoute>>();
 
+function directoryRoute(detail: ReturnType<typeof readRoute>) {
+  const query = Object.fromEntries(
+    ["q", "sort", "category"].filter(key => key in detail.query).map(key => [key, detail.query[key]]),
+  );
+  return { ...detail, id: "", query };
+}
+
 function syncRoute() {
   const next = readRoute();
-  if (rememberedPages.has(next.page)) lastRoutes.set(next.page, next);
+  if (rememberedPages.has(next.page)) {
+    lastRoutes.set(next.page, isAndroidOnline && next.id ? directoryRoute(next) : next);
+  }
   route.value = next;
 }
 
@@ -73,34 +82,15 @@ export function navigate(
   const search = new URLSearchParams(query).toString();
   const hash = "#/" + path + detail + (search ? "?" + search : "");
   if (window.location.hash === hash) return;
-  const state = isAndroidOnline
-    ? { ...window.history.state, shiyinRoute: !replace || window.history.state?.shiyinRoute === true }
-    : null;
-  window.history[replace ? "replaceState" : "pushState"](state, "", hash);
+  window.history[replace || isAndroidOnline ? "replaceState" : "pushState"](null, "", hash);
   syncRoute();
 }
-export const androidBackEvent = "shiyin:android-back";
-
-export function backWithinApp(canGoBack: boolean) {
-  if (!window.dispatchEvent(new Event(androidBackEvent, { cancelable: true }))) return true;
-  if (canGoBack || window.history.state?.shiyinRoute) {
-    window.history.back();
-    return true;
-  }
-
-  const { page, platform, id, query } = route.value;
-  if (id && rememberedPages.has(page)) {
-    const directoryQuery = Object.fromEntries(
-      ["q", "sort", "category"].filter(key => key in query).map(key => [key, query[key]]),
-    );
-    navigate(page, platform, "", directoryQuery, true);
-    return true;
-  }
-  if (page !== defaultPage) {
-    navigate(defaultPage, "wy", "", {}, true);
-    return true;
-  }
-  return false;
+export function backFromAndroidDetail() {
+  const current = route.value;
+  if (!current.id || !rememberedPages.has(current.page)) return false;
+  const { page, platform, query } = directoryRoute(current);
+  navigate(page, platform, "", query, true);
+  return true;
 }
 
 window.addEventListener("hashchange", syncRoute);
