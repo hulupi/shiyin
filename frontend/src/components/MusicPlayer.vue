@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { preferredVariant, variantQualityName } from "../services/music";
+import { preferredVariant, trackCover, variantQualityName } from "../services/music";
 import { setLyricsSystemBars } from "../stores/theme";
+import { androidPlayback, type AndroidPlaybackItem, type AndroidPlaybackState } from "../android/playback";
+import { androidBackEvent } from "../services/router";
 import { isAndroidOnline } from "../services/platform";
 import { appUrl } from "../services/urls";
 import { computed, ref, watch, nextTick, onMounted, onUnmounted } from "vue";
@@ -79,6 +81,144 @@ const {
   resize: resizeQueue,
 } = usePagination(queue);
 const playbackMode = ref("列表循环");
+let nativeId = "";
+let nativeFinished = "";
+let prefetchController: AbortController | undefined;
+let preparedNext: { item: AndroidPlaybackItem; track: Track; result: OnlinePlayback } | undefined;
+const failedArtwork = ref("");
+const artwork = computed(() => current.value?.hasCover ? trackCover(current.value) : "");
+const visibleArtwork = computed(() => artwork.value && artwork.value !== failedArtwork.value);
+watch(current, () => { failedArtwork.value = ""; });
+
+interface OnlinePlayback {
+  audioUrl: string;
+  lyricUrl: string;
+  sourceId: string;
+  sourceName: string;
+  quality: string;
+  mode: string;
+  audioVariant?: Parameters<typeof variantQualityName>[0];
+  activityId?: string;
+}
+
+function nativeItem(track: Track, path: string): AndroidPlaybackItem {
+  return {
+    id: crypto.randomUUID(), path, title: track.title, artist: track.artist,
+    album: track.album, artwork: trackCover(track) || undefined,
+  };
+}
+
+function requestOnlinePlayback(track: Track, signal: AbortSignal, exclude: string[] = [], retry = false, activityId?: string): Promise<OnlinePlayback> {
+  return api("/online/" + encodeURIComponent(track.id) + "/resolve", {
+    method: "POST",
+    body: JSON.stringify({
+      quality: preferredQuality.value, exclude, skipLocal: retry,
+      onlineOnly: isAndroidOnline, activityId,
+    }),
+    signal,
+  });
+}
+
+function updateLyrics(url: string, request: number, signal?: AbortSignal) {
+  void api(url, { signal }).then(result => {
+    if (request === lyricRequest) lyricText.value = result.text;
+  }).catch(() => {});
+}
+
+function runNative(action: Parameters<typeof androidPlayback.control>[0]["action"], value?: number, enabled?: boolean) {
+  if (!nativeId) return;
+  void androidPlayback.control({ action, value, enabled }).then(applyNativeState).catch(message);
+}
+
+function cancelPrefetch() {
+  prefetchController?.abort();
+  prefetchController = undefined;
+  preparedNext = undefined;
+}
+
+async function prepareNext() {
+  const owner = nativeId;
+  const track = current.value;
+  if (!owner || !track || resolving.value || !playing.value) return;
+  const repeat = playbackMode.value === "单曲循环" && !nextQueuedId;
+  runNative("repeat", undefined, repeat);
+  const nextTrack = repeat ? undefined : pickNext(1, true);
+  if (nextTrack?.id === preparedNext?.track.id && preparedNext) return;
+  cancelPrefetch();
+  const controller = new AbortController();
+  prefetchController = controller;
+  try {
+    await androidPlayback.setNext({ currentId: owner });
+    if (!nextTrack || controller.signal.aborted) return;
+    const result = await requestOnlinePlayback(nextTrack, controller.signal);
+    if (controller.signal.aborted || nativeId !== owner) return;
+    const item = nativeItem(nextTrack, appUrl(result.audioUrl));
+    preparedNext = { item, track: nextTrack, result };
+    await androidPlayback.setNext({ currentId: owner, ...item });
+  } catch {
+    if (prefetchController === controller) preparedNext = undefined;
+  } finally {
+    if (prefetchController === controller) prefetchController = undefined;
+  }
+}
+
+function applyNativeState(state: AndroidPlaybackState) {
+  if (!state.id || !nativeId) return;
+  if (state.id !== nativeId) {
+    if (state.id !== preparedNext?.item.id) return;
+    const { track, result, item } = preparedNext;
+    cancelPrefetch();
+    if (nextQueuedId === track.id) nextQueuedId = undefined;
+    nativeId = item.id;
+    playing.value = false;
+    current.value = track;
+    playbackUrl.value = item.path;
+    playbackSource.value = result.sourceName;
+    playbackQuality.value = result.quality;
+    usedSourceId = result.sourceId;
+    playbackActivityReported = false;
+    refreshedSource = false;
+    failedSources = [];
+    lyricText.value = "";
+    duration.value = track.duration;
+    updateLyrics(result.lyricUrl.replace(/^\/api/, ""), ++lyricRequest);
+  }
+  progress.value = state.position;
+  if (state.duration > 0) duration.value = state.duration;
+  buffering.value = state.buffering;
+  if (state.playing && !playing.value) {
+    recordPlay();
+    void prepareNext();
+  } else if (!state.playing) playing.value = false;
+
+  if (!resolving.value && (state.ended || state.failed) && nativeFinished !== state.id) {
+    nativeFinished = state.id;
+    if (state.failed) playbackError();
+    else next(1, true);
+  }
+}
+
+if (isAndroidOnline) {
+  watch([queue, playbackMode], () => { void prepareNext(); }, { deep: true });
+  onMounted(() => {
+    const listening = androidPlayback.addListener("state", applyNativeState);
+    void listening.catch(message);
+    const timer = setInterval(() => {
+      if (nativeId && !document.hidden && (playing.value || buffering.value)) runNative("state");
+    }, 500);
+    const onVisibility = () => { if (!document.hidden) runNative("state"); };
+    document.addEventListener("visibilitychange", onVisibility);
+    removeNativeListener = () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      void listening.then(listener => listener.remove()).catch(() => {});
+      cancelPrefetch();
+    };
+  });
+  let removeNativeListener: (() => void) | undefined;
+  onUnmounted(() => removeNativeListener?.());
+}
+
 type PlaybackSnapshot = {
   queue: Track[];
   current: Track | null;
@@ -125,7 +265,15 @@ if (desktopPlayback) {
   onMounted(() => window.addEventListener("beforeunload", savePlayback));
   onUnmounted(() => window.removeEventListener("beforeunload", savePlayback));
 }
-watch(showLyrics, setLyricsSystemBars, { flush: "sync" });
+watch(showLyrics, open => { if (open) setLyricsSystemBars(true); }, { flush: "sync" });
+function closePlayerOverlay(event: Event) {
+  if (!showLyrics.value && !showQueue.value) return;
+  event.preventDefault();
+  if (showQueue.value) showQueue.value = false;
+  else showLyrics.value = false;
+}
+onMounted(() => window.addEventListener(androidBackEvent, closePlayerOverlay));
+onUnmounted(() => window.removeEventListener(androidBackEvent, closePlayerOverlay));
 onUnmounted(() => setLyricsSystemBars(false));
 
 const lyricContainer = ref<HTMLElement>();
@@ -260,6 +408,11 @@ async function play(track: Track, replace = true, retry = false, position?: numb
   const controller = new AbortController();
   playbackController = controller;
   const request = ++lyricRequest;
+  if (isAndroidOnline) {
+    cancelPrefetch();
+    runNative("pause");
+    nativeId = "";
+  }
   if (replace) queue.value = [...fallbackTracks.value];
   mediaControl.pause(audio.value);
   playing.value = false;
@@ -277,26 +430,13 @@ async function play(track: Track, replace = true, retry = false, position?: numb
     refreshedSource = false;
     usedSourceId = "";
   }
-  const audioReady = prepareSpectrum();
+  const audioReady = isAndroidOnline ? Promise.resolve() : prepareSpectrum();
   audioReady.catch(() => {});
   resolving.value = true;
   try {
     let lyricUrl = "/tracks/" + encodeURIComponent(track.id) + "/lyrics";
     if (track.online) {
-      const result = await api(
-        "/online/" + encodeURIComponent(track.id) + "/resolve",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            quality: preferredQuality.value,
-            exclude: failedSources,
-            skipLocal: retry,
-            onlineOnly: isAndroidOnline,
-            activityId: playbackActivityId,
-          }),
-          signal: controller.signal,
-        },
-      );
+      const result = await requestOnlinePlayback(track, controller.signal, failedSources, retry, playbackActivityId);
       if (request !== lyricRequest) return;
       usedSourceId = result.sourceId || "";
       playbackActivityId = result.activityId;
@@ -315,24 +455,34 @@ async function play(track: Track, replace = true, retry = false, position?: numb
     await nextTick();
     await audioReady;
     if (request !== lyricRequest) return;
-    if (audio.value) {
+    if (isAndroidOnline) {
+      const item = nativeItem(track, playbackUrl.value);
+      nativeId = item.id;
+      buffering.value = true;
+      await androidPlayback.start({ ...item, position: position ?? 0, volume: volume.value });
+      if (request === lyricRequest) restorePosition = undefined;
+    } else if (audio.value) {
       audio.value.volume = volume.value;
       await mediaControl.play(audio.value);
     }
     if (request !== lyricRequest) return;
-    api(lyricUrl, { signal: controller.signal })
-      .then((result) => {
-        if (request === lyricRequest) lyricText.value = result.text;
-      })
-      .catch(() => {});
+    updateLyrics(lyricUrl, request, controller.signal);
     if (track.online) void refresh();
   } catch (e) {
     if (!controller.signal.aborted && request === lyricRequest) {
+      buffering.value = false;
+      if (isAndroidOnline) nativeId = "";
       if (playbackUrl.value) reportPlaybackFailure();
       message(e);
     }
   } finally {
-    if (request === lyricRequest) resolving.value = false;
+    if (request === lyricRequest) {
+      resolving.value = false;
+      if (isAndroidOnline) {
+        runNative("state");
+        if (playing.value) void prepareNext();
+      }
+    }
   }
 }
 function playOnline(track: Track, list: Track[]) {
@@ -387,6 +537,7 @@ function pausePlayback() {
   resolving.value = false;
   buffering.value = false;
   mediaControl.pause(audio.value);
+  if (isAndroidOnline) runNative("pause");
   playing.value = false;
 }
 async function resumePlayback() {
@@ -396,11 +547,12 @@ async function resumePlayback() {
     if (first) void play(first, !queue.value.length);
     return;
   }
-  if (!playbackUrl.value) {
+  if (!playbackUrl.value || (isAndroidOnline && !nativeId)) {
     void play(current.value, false, false, restorePosition);
     return;
   }
-  if (audio.value) {
+  if (isAndroidOnline) runNative("play");
+  else if (audio.value) {
     try {
       await mediaControl.play(audio.value, prepareSpectrum());
     } catch (e) {
@@ -409,14 +561,14 @@ async function resumePlayback() {
   }
 }
 function toggle() {
-  if (resolving.value || mediaControl.pending || (audio.value && !audio.value.paused)) pausePlayback();
+  if (resolving.value || buffering.value || playing.value || mediaControl.pending || (audio.value && !audio.value.paused)) pausePlayback();
   else void resumePlayback();
 }
 
 function recordPlay() {
   buffering.value = false;
   playing.value = true;
-  if (!current.value) return;
+  if (!current.value || (isAndroidOnline && playbackActivityReported)) return;
   const logPlayback = !playbackActivityReported;
   playbackActivityReported = true;
   api("/history/" + encodeURIComponent(current.value.id), {
@@ -429,13 +581,8 @@ function recordPlay() {
     .then((ids) => (library.value.history = ids))
     .catch(message);
 }
-function next(delta = 1, ended = false) {
+function pickNext(delta: number, ended: boolean) {
   if (!queue.value.length) return;
-  if (ended && playbackMode.value === "单曲循环" && !nextQueuedId) {
-    seek(0);
-    if (audio.value) void mediaControl.play(audio.value).catch(message);
-    return;
-  }
   const index = queue.value.findIndex((t) => t.id === current.value?.id);
   if (
     ended &&
@@ -443,7 +590,6 @@ function next(delta = 1, ended = false) {
     index === queue.value.length - 1 &&
     !nextQueuedId
   ) {
-    playing.value = false;
     return;
   }
   const forced =
@@ -456,11 +602,32 @@ function next(delta = 1, ended = false) {
       : playbackMode.value === "随机播放"
         ? Math.floor(Math.random() * queue.value.length)
         : (index + delta + queue.value.length) % queue.value.length;
-  if (forced >= 0) nextQueuedId = undefined;
-  void play(queue.value[target], false);
+  return queue.value[target];
 }
+function next(delta = 1, ended = false) {
+  if (ended && playbackMode.value === "单曲循环" && !nextQueuedId) {
+    seek(0);
+    if (isAndroidOnline) runNative("play");
+    else if (audio.value) void mediaControl.play(audio.value).catch(message);
+    return;
+  }
+  if (isAndroidOnline && !ended && delta === 1 && preparedNext) {
+    runNative("next");
+    return;
+  }
+  const track = delta === 1 && preparedNext ? preparedNext.track : pickNext(delta, ended);
+  if (!track) return;
+  if (delta === 1 && track.id === nextQueuedId) nextQueuedId = undefined;
+  void play(track, false);
+}
+
+watch(volume, (value) => { if (isAndroidOnline) runNative("volume", Number(value)); });
+
 function seek(value: number) {
-  if (audio.value && Number.isFinite(value)) {
+  if (isAndroidOnline && Number.isFinite(value)) {
+    progress.value = value;
+    runNative("seek", value);
+  } else if (audio.value && Number.isFinite(value)) {
     const length = audio.value.duration;
     audio.value.currentTime = Math.max(0, Number.isFinite(length) ? Math.min(length, value) : value);
     progress.value = audio.value.currentTime;
@@ -475,14 +642,6 @@ function loadedMetadata() {
 }
 function clock(n: number) {
   return `${Math.floor((n || 0) / 60)}:${String(Math.floor((n || 0) % 60)).padStart(2, "0")}`;
-}
-function cover(track: Track) {
-  return appUrl(
-    "/api/" +
-    (track.online ? "online/" : "tracks/") +
-    encodeURIComponent(track.id) +
-    "/cover"
-  );
 }
 function key(event: KeyboardEvent) {
   if (
@@ -501,11 +660,12 @@ function syncSystemMedia() {
   const track = current.value;
   systemMedia?.update(track ? {
     id: track.id, title: track.title, artist: track.artist, album: track.album,
-    artwork: track.hasCover ? cover(track) : undefined,
+    artwork: track.hasCover ? trackCover(track) : undefined,
   } : null, playing.value, duration.value, progress.value, audio.value?.playbackRate || 1);
 }
 watch([current, playing, duration, progress], syncSystemMedia);
 onMounted(() => {
+  if (isAndroidOnline) return;
   systemMedia = connectSystemMediaSession({
     play: () => { void resumePlayback(); },
     pause: pausePlayback,
@@ -561,6 +721,7 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
     :close-on-click-modal="false"
     append-to-body
     @opened="followCurrentLyric"
+    @closed="!showLyrics && setLyricsSystemBars(false)"
     class="lyrics-dialog"
     title="正在播放"
     modal-class="lyrics-modal"
@@ -578,8 +739,9 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
           <div class="lyric-info">
             <div class="large-cover">
               <img
-                v-if="current?.hasCover"
-                :src="cover(current)"
+                v-if="visibleArtwork"
+                :src="artwork"
+                @error="failedArtwork = artwork"
                 alt="歌曲封面"
               /><AppIcon v-else name="music" :size="24" />
               <span v-if="resolving" class="player-cover-loading" role="status" aria-label="正在加载歌曲">
@@ -703,7 +865,7 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
       aria-hidden="true"
     ></canvas>
     <div class="cover player-cover" :class="{ spinning: playing }">
-      <img v-if="current?.hasCover" :src="cover(current)" alt="" /><AppIcon
+      <img v-if="visibleArtwork" :src="artwork" alt="" @error="failedArtwork = artwork" /><AppIcon
         v-else
         name="music"
         :size="24"
@@ -814,6 +976,7 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
     </div>
   </footer>
   <audio
+    v-if="!isAndroidOnline"
     ref="audio"
     :src="playbackUrl || undefined"
     @playing="recordPlay"
@@ -2090,7 +2253,7 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   }
 }
 @media (max-width: 700px) {
-  :global(html.android-online) .app-shell > .player {
+  :global(html.android-online .app-shell > .player) {
     bottom: 0;
     height: calc(var(--mobile-player-bar-height) + env(safe-area-inset-bottom, 0px));
     padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
@@ -2101,15 +2264,15 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
     backdrop-filter: none;
   }
 
-  :global(html.android-online) .player .audio-spectrum {
+  :global(html.android-online .player .audio-spectrum) {
     bottom: calc(4px + env(safe-area-inset-bottom, 0px));
   }
 
-  :global(html.android-online) .player .progress {
+  :global(html.android-online .player .progress) {
     inset: 0 0 auto;
   }
 
-  :global(html.android-online) .player::after {
+  :global(html.android-online .player::after) {
     inset: 0;
     border-bottom: 0;
     border-top: 2px solid var(--day-accent-text, #a9efc3);

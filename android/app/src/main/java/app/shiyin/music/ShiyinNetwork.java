@@ -1,24 +1,18 @@
 package app.shiyin.music;
 
+import android.net.Uri;
 import android.util.Base64;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebResourceResponse;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.Proxy;
 import java.net.UnknownHostException;
-import java.nio.charset.StandardCharsets;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -29,6 +23,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import okhttp3.Dns;
 import okhttp3.HttpUrl;
+import okhttp3.Interceptor;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
@@ -45,6 +40,7 @@ public final class ShiyinNetwork extends Plugin {
         .dns(ShiyinNetwork::resolvePublic)
         .proxy(Proxy.NO_PROXY)
         .followRedirects(false)
+        .addInterceptor(ShiyinNetwork::followPublicRedirects)
         .callTimeout(25, TimeUnit.SECONDS)
         .build();
     private static final OkHttpClient PROBE = HTTP.newBuilder().callTimeout(5000, TimeUnit.MILLISECONDS).build();
@@ -76,10 +72,22 @@ public final class ShiyinNetwork extends Plugin {
         return url;
     }
 
-    private static Response open(OkHttpClient client, Request initial) throws IOException {
-        Request request = initial;
+    static OkHttpClient mediaClient() { return MEDIA; }
+
+    static Uri mediaUri(String path) throws IOException {
+        if (!path.startsWith(AUDIO_PREFIX)) throw new IOException("Invalid audio path");
+        synchronized (AUDIO) {
+            HttpUrl url = AUDIO.get(path.substring(AUDIO_PREFIX.length()));
+            if (url == null) throw new IOException("Unknown audio path");
+            return Uri.parse(url.toString());
+        }
+    }
+
+    private static Response followPublicRedirects(Interceptor.Chain chain) throws IOException {
+        Request request = chain.request();
         for (int i = 0; i < 5; i++) {
-            Response response = client.newCall(request).execute();
+            publicUrl(request.url().toString());
+            Response response = chain.proceed(request);
             String location = response.header("Location");
             int code = response.code();
             if (location == null || !(code == 301 || code == 302 || code == 303 || code == 307 || code == 308)) {
@@ -119,7 +127,7 @@ public final class ShiyinNetwork extends Plugin {
                 int limit = Math.max(1, Math.min(MAX_BYTES, call.getInt("limit", MAX_BYTES)));
                 int timeout = Math.max(1000, Math.min(25000, call.getInt("timeout", 25000)));
                 OkHttpClient client = HTTP.newBuilder().callTimeout(timeout, TimeUnit.MILLISECONDS).build();
-                try (Response response = open(client, builder.method(method, data).build())) {
+                try (Response response = client.newCall(builder.method(method, data).build()).execute()) {
                     JSObject responseHeaders = new JSObject();
                     for (String name : response.headers().names()) {
                         responseHeaders.put(name.toLowerCase(Locale.ROOT), response.header(name));
@@ -161,7 +169,7 @@ public final class ShiyinNetwork extends Plugin {
                 .header("Range", "bytes=0-1")
                 .header("Accept-Encoding", "identity")
                 .build();
-            try (Response response = open(PROBE, request)) {
+            try (Response response = PROBE.newCall(request).execute()) {
                 if (!isAudio(response)) throw new IOException("链接无法播放");
             }
             String id = UUID.randomUUID().toString();
@@ -181,44 +189,5 @@ public final class ShiyinNetwork extends Plugin {
         String type = response.header("Content-Type", "application/octet-stream");
         return response.isSuccessful() && response.body() != null
             && !type.matches("(?i)text/.*|.*(?:json|xml|html).*");
-    }
-
-    static WebResourceResponse stream(WebResourceRequest request) {
-        HttpUrl url;
-        synchronized (AUDIO) { url = AUDIO.get(request.getUrl().getPath().substring(AUDIO_PREFIX.length())); }
-        if (url == null) return streamError(404, "Not Found");
-        try {
-            Request.Builder builder = new Request.Builder().url(url).header("User-Agent", "Mozilla/5.0")
-                .header("Accept-Encoding", "identity");
-            request.getRequestHeaders().forEach((key, value) -> {
-                if (key.equalsIgnoreCase("Range")) builder.header("Range", value);
-            });
-            Response response = open(MEDIA, builder.build());
-            ResponseBody body = response.body();
-            String contentType = response.header("Content-Type", "application/octet-stream").split(";", 2)[0];
-            if (!isAudio(response) || body == null) {
-                response.close();
-                return streamError(502, "Bad Gateway");
-            }
-            Map<String, String> headers = new HashMap<>();
-            for (String name : new String[] {"Content-Length", "Content-Range", "Accept-Ranges"}) {
-                String value = response.header(name);
-                if (value != null) headers.put(name, value);
-            }
-            InputStream input = new FilterInputStream(body.byteStream()) {
-                @Override public void close() throws IOException {
-                    try { super.close(); } finally { response.close(); }
-                }
-            };
-            return new WebResourceResponse(contentType, null, response.code(),
-                response.code() == 206 ? "Partial Content" : "OK", headers, input);
-        } catch (IOException | IllegalArgumentException error) {
-            return streamError(502, "Bad Gateway");
-        }
-    }
-
-    private static WebResourceResponse streamError(int code, String reason) {
-        return new WebResourceResponse("text/plain", "utf-8", code, reason, Collections.emptyMap(),
-            new ByteArrayInputStream(reason.getBytes(StandardCharsets.UTF_8)));
     }
 }

@@ -73,9 +73,36 @@ export function navigate(
   const search = new URLSearchParams(query).toString();
   const hash = "#/" + path + detail + (search ? "?" + search : "");
   if (window.location.hash === hash) return;
-  window.history[replace ? "replaceState" : "pushState"](null, "", hash);
+  const state = isAndroidOnline
+    ? { ...window.history.state, shiyinRoute: !replace || window.history.state?.shiyinRoute === true }
+    : null;
+  window.history[replace ? "replaceState" : "pushState"](state, "", hash);
   syncRoute();
 }
+export const androidBackEvent = "shiyin:android-back";
+
+export function backWithinApp(canGoBack: boolean) {
+  if (!window.dispatchEvent(new Event(androidBackEvent, { cancelable: true }))) return true;
+  if (canGoBack || window.history.state?.shiyinRoute) {
+    window.history.back();
+    return true;
+  }
+
+  const { page, platform, id, query } = route.value;
+  if (id && rememberedPages.has(page)) {
+    const directoryQuery = Object.fromEntries(
+      ["q", "sort", "category"].filter(key => key in query).map(key => [key, query[key]]),
+    );
+    navigate(page, platform, "", directoryQuery, true);
+    return true;
+  }
+  if (page !== defaultPage) {
+    navigate(defaultPage, "wy", "", {}, true);
+    return true;
+  }
+  return false;
+}
+
 window.addEventListener("hashchange", syncRoute);
 window.addEventListener("popstate", syncRoute);
 if (!window.location.hash) navigate(defaultPage, "wy", "", {}, true);

@@ -5,6 +5,7 @@ defineOptions({ name: "search" });
 import { ElMessage } from "element-plus";
 import { onActivated, onDeactivated, onUnmounted, ref, watch } from "vue";
 import type { AlbumSearchResult, Track } from "../../../backend/src/contracts";
+import { androidBackEvent } from "../services/router";
 import { requestApi as api } from "../services/api";
 import AppIcon from "../components/AppIcon.vue";
 import { appUrl } from "../services/urls";
@@ -224,7 +225,15 @@ function selectPlatform(id: string | number | boolean) {
 }
 const name = (id: string) =>
   platforms.find((item) => item.id === id)?.name || id;
+function goBackFromAlbum(event: Event) {
+  if (!selectedAlbum.value) return;
+  event.preventDefault();
+  closeAlbum();
+}
+onActivated(() => window.addEventListener(androidBackEvent, goBackFromAlbum));
+onDeactivated(() => window.removeEventListener(androidBackEvent, goBackFromAlbum));
 onUnmounted(() => {
+  window.removeEventListener(androidBackEvent, goBackFromAlbum);
   controller?.abort();
   albumController?.abort();
 });

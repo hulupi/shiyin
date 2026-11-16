@@ -6,10 +6,7 @@ type Theme = "light" | "dark";
 const storageKey = "shiyin:theme";
 
 const systemBars = registerPlugin<{
-  setStyle(options: { style: "LIGHT" | "DARK" }): Promise<void>;
-}>("SystemBars");
-const systemBarBackground = registerPlugin<{
-  setBackground(options: { status: string; navigation: string }): Promise<void>;
+  setAppearance(options: { status: string; navigation: string; darkIcons: boolean }): Promise<void>;
 }>("ShiyinSystemBars");
 
 function readTheme(): Theme {
@@ -53,16 +50,11 @@ if (isAndroidOnline) {
     html.style.setProperty("--android-player-background", player);
     html.style.setProperty("--android-lyrics-edge", lyrics);
 
-    // Capacitor reapplies its window background when setting icon contrast.
-    void systemBars.setStyle({ style: light ? "LIGHT" : "DARK" })
-      .then(() => {
-        if (theme.value === value && lyricsOpen.value === open) {
-          return systemBarBackground.setBackground({
-            status: open ? lyrics : header,
-            navigation: open ? lyrics : player,
-          });
-        }
-      })
+    void systemBars.setAppearance({
+      status: open ? lyrics : header,
+      navigation: open ? lyrics : player,
+      darkIcons: light,
+    })
       .catch(error => console.warn("Unable to update Android system bars", error));
   }, { immediate: true, flush: "sync" });
 }
