@@ -1,0 +1,13 @@
+{
+  ".url": {
+    "shiyin-docker.main": {
+      "title": "拾音 Docker 版",
+      "icon": "images/icon_{0}.png",
+      "type": "url",
+      "protocol": "http",
+      "port": "4180",
+      "url": "/",
+      "allUsers": true
+    }
+  }
+}

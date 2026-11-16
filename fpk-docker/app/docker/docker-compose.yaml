@@ -1,0 +1,12 @@
+services:
+  shiyin:
+    image: "@SHIYIN_IMAGE@"
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${TRIM_SERVICE_PORT}:4180"
+    volumes:
+      - shiyin-data:/data
+
+volumes:
+  shiyin-data:

@@ -107,3 +107,33 @@ FPK 构建、统一网关和真机验收步骤见 [FPK 打包说明](docs/fpk打
 
 - 请使用合法取得且有权使用的本地音乐，并遵守第三方音源的使用许可和平台条款。
 - 请在权利人许可或法律允许的范围内播放、下载、复制或分享相关内容。搜索结果和播放、下载入口本身不代表使用授权。
+
+## Docker 部署
+
+在仓库根目录执行 `docker compose up -d --build`。启动后访问
+`http://飞牛IP:4180`，API 位于同一地址的 `/api` 下。可用
+`docker compose ps` 查看健康状态，或用 `docker compose logs -f shiyin` 查看日志。
+
+默认把项目下的 `./music` 只读挂载到容器的 `/music`。如果音乐放在飞牛的其他目录，
+在项目根目录的 `.env` 里设置 `SHIYIN_MUSIC_DIR=/实际的音乐目录`，再启动 Compose。
+在拾音里添加 `/music` 作为音乐目录，并确保容器用户（UID 1000）能读取该目录。
+如需下载歌曲，另挂载一个对该用户可写的目录，并在拾音中把下载位置指向该挂载点。
+
+收藏和设置等数据保存在 `shiyin-data` 命名卷中，重建容器会保留该卷。
+迁移已有收藏可使用「备份与恢复」。服务免登录，适合在可信局域网内使用。
+
+### 飞牛 Docker 版 FPK
+
+在 GitHub Actions 手动运行 **Publish Docker image**，发布对应 `package.json`
+版本的 amd64 / arm64 镜像。首次发布后，在 GitHub Packages 将镜像设为公开，
+或确保目标飞牛已登录有拉取权限的镜像仓库。
+
+在安装了 `fnpack` 的开发机运行 `npm run package:fpk:docker`，安装包输出到
+`fpk-docker/shiyin-docker-<版本>-all.fpk`。默认镜像为
+`ghcr.io/hulupi/shiyin:<版本>`。也可以用
+`npm run package:fpk:docker -- <镜像地址:标签>` 指定其他仓库。
+
+在飞牛安装并启用 Docker 后，从应用中心「手动安装」上传该 FPK。
+应用中心负责容器启停，网页和客户端使用 `http://飞牛IP:4180`。
+收藏和设置保存在 Docker 命名卷中。Docker 版使用独立应用标识和数据库；
+需要迁移原生版收藏时，可使用「备份与恢复」。

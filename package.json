@@ -14,6 +14,7 @@
     "dev": "node scripts/dev/start.mjs",
     "build": "npm run build --workspace frontend",
     "start": "npm run start --workspace backend",
+    "package:fpk:docker": "node scripts/package/fpk-docker.mjs",
     "package:fpk": "node scripts/package/fpk.mjs",
     "android:sync": "npm run build --workspace frontend -- --mode android && cap sync android",
     "android:open": "cap open android"

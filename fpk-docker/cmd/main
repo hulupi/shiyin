@@ -1,0 +1,11 @@
+#!/bin/bash
+
+case "$1" in
+  start|stop) exit 0 ;;
+  status)
+    curl --fail --silent --max-time 2 --output /dev/null \
+      "http://127.0.0.1:${TRIM_SERVICE_PORT:-4180}/api/library" && exit 0
+    exit 3
+    ;;
+  *) exit 1 ;;
+esac

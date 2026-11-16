@@ -1,0 +1,13 @@
+appname=shiyin-docker
+version=0.1.12
+display_name=拾音 Docker 版
+desc=运行拾音音乐库和收藏服务。
+source=thirdparty
+platform=all
+maintainer=拾音
+distributor=拾音
+desktop_uidir=ui
+desktop_applaunchname=shiyin-docker.main
+service_port=4180
+checkport=true
+ctl_stop=true

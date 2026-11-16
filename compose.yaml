@@ -1,0 +1,19 @@
+services:
+  shiyin:
+    build: .
+    restart: unless-stopped
+    init: true
+    ports:
+      - "4180:4180"
+    volumes:
+      - shiyin-data:/data
+      - "${SHIYIN_MUSIC_DIR:-./music}:/music:ro"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4180/api/library').then(r => { if (!r.ok) process.exitCode = 1 }).catch(() => { process.exitCode = 1 })"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  shiyin-data:
