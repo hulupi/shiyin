@@ -85,7 +85,6 @@ const playbackMode = ref("列表循环");
 let nativeId = "";
 let nativeFinished = "";
 let prefetchController: AbortController | undefined;
-const queuedAheadLimit = 5;
 const preparedTracks: { item: AndroidPlaybackItem; track: Track; result: OnlinePlayback }[] = [];
 let clearingUpcoming = false;
 const { artwork, artworkError } = useTrackArtwork(() => current.value);
@@ -161,7 +160,7 @@ async function prepareNext() {
   if (!nativeId || !current.value || resolving.value || !playing.value || prefetchController || clearingUpcoming) return;
   const repeat = playbackMode.value === "单曲循环" && !nextQueuedId;
   runNative("repeat", undefined, repeat);
-  if (repeat || preparedTracks.length >= queuedAheadLimit) return;
+  if (repeat) return;
 
   const tail = preparedTracks.at(-1);
   let tailId = tail?.item.id ?? nativeId;
@@ -169,8 +168,10 @@ async function prepareNext() {
   prefetchController = controller;
   try {
     const order = prefetchOrder(tail?.track ?? current.value);
-    for (const track of order.slice(0, queuedAheadLimit + 3)) {
-      if (controller.signal.aborted || preparedTracks.length >= queuedAheadLimit) break;
+    // Give Media3 the rest of this pass while WebView can resolve sources.
+    // It can then advance through the prepared items without a JS callback.
+    for (const track of order) {
+      if (controller.signal.aborted) break;
       let result: OnlinePlayback;
       try { result = await requestOnlinePlayback(track, controller.signal); }
       catch { continue; }
@@ -215,8 +216,8 @@ function applyNativeState(state: AndroidPlaybackState) {
     const index = preparedTracks.findIndex(entry => entry.item.id === state.id);
     if (index < 0) return;
     const { track, result, item } = preparedTracks[index];
-    preparedTracks.splice(0, index + 1);
-    if (nextQueuedId === track.id) nextQueuedId = undefined;
+    const consumed = preparedTracks.splice(0, index + 1);
+    if (consumed.some(entry => entry.track.id === nextQueuedId)) nextQueuedId = undefined;
     nativeId = item.id;
     playing.value = false;
     current.value = track;
