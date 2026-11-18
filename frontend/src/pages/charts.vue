@@ -439,7 +439,7 @@ onUnmounted(() => {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: 12px;
-    margin-bottom: 18px;
+    margin-bottom: 8px;
   }
   .chart-detail-heading .chart-detail-copy {
     grid-column: 1 / -1;

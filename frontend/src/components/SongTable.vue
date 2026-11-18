@@ -991,10 +991,10 @@ function clock(seconds: number) {
 .album-dialog-content > .song-table { min-height: 0; }
 .album-link-compact { display: none; }
 @container (max-width: 540px) {
-  .album-link-compact { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  .album-link-compact { display: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 }
 @media (max-width: 700px) {
-  .album-link-compact { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  .album-link-compact { display: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 }
 @media (max-width: 700px) {
   .song-toolbar {

@@ -8,6 +8,7 @@ import App from "./App.vue";
 import "./stores/theme";
 import "./styles/android.scss";
 import "./styles/desktop.scss";
+import "./styles/mobile.scss";
 import { isAndroidOnline, isDesktop } from "./services/platform";
 
 document.documentElement.classList.toggle("android", isAndroidOnline);

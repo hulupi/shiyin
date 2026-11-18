@@ -104,7 +104,7 @@ onUnmounted(() => observer?.disconnect());
   display: grid;
   place-items: center;
   color: white;
-  background: rgb(0 0 0 / 48%);
+  background: rgb(0 0 0 / 28%);
   opacity: 0;
 }
 

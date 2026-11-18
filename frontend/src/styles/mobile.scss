@@ -1,0 +1,21 @@
+// 手机端样式
+@media screen and (max-width: 768px) {
+  .topbar,.song-toolbar-search ,.batch-track-actions,.song-batch-toolbar>span{
+    
+    display: none !important;
+  }
+  .song-batch-toolbar{
+    flex-wrap: nowrap !important;
+  }
+  .song-table .track-selection {
+    display: none !important;
+  }
+  .song-table .track-selection + .track-info {
+    grid-column: 1 / 3;
+  }
+  .album-heading{
+    strong{
+      display: none;
+    }
+  }
+}
