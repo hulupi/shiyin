@@ -4,11 +4,13 @@ import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.os.Handler;
 import androidx.annotation.NonNull;
 import androidx.media3.common.AudioAttributes;
 import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.Player;
+import androidx.media3.common.PlaybackException;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.okhttp.OkHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
@@ -44,9 +46,20 @@ public final class ShiyinPlaybackService extends MediaSessionService {
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build();
+        Handler playbackHandler = new Handler(player.getApplicationLooper());
         player.addListener(new Player.Listener() {
             @Override public void onMediaItemTransition(MediaItem item, int reason) {
                 updateFavoriteButton();
+            }
+
+            @Override public void onPlayerError(@NonNull PlaybackException error) {
+                if (!player.getPlayWhenReady() || !player.hasNextMediaItem()) return;
+                playbackHandler.post(() -> {
+                    if (session == null || player.getPlayerError() != error
+                            || !player.getPlayWhenReady() || !player.hasNextMediaItem()) return;
+                    player.seekToNextMediaItem();
+                    player.prepare();
+                });
             }
         });
         PendingIntent activity = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),

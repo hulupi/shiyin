@@ -9,6 +9,8 @@ import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import { route, navigate } from "../services/router";
 import type { Track } from "../../../backend/src/contracts";
 import { requestApi as api } from "../services/api";
+import { isAndroidOnline } from "../services/platform";
+import { loadPlaybackList } from "../services/playbackList";
 import AppIcon from "../components/AppIcon.vue";
 import SongTable from "../components/SongTable.vue";
 interface Chart {
@@ -272,6 +274,30 @@ async function loadMore() {
     }
   }
 }
+let playbackRequest = 0;
+async function playList(track: Track, list: Track[]) {
+  const chart = selected.value;
+  if (!isAndroidOnline || !chart || !hasMore.value) {
+    ++playbackRequest;
+    emit("play", track, list);
+    return;
+  }
+  const request = ++playbackRequest;
+  const active = controller;
+  try {
+    const fullList = await loadPlaybackList(
+      `/discover/${platform.value}/${chart.id}`,
+      tracks.value, page.value, active?.signal,
+    );
+    if (request === playbackRequest && active === controller && !active?.signal.aborted) {
+      emit("play", track, fullList);
+    }
+  } catch (error) {
+    if (request === playbackRequest && active === controller && !active?.signal.aborted) {
+      emit("notify", error instanceof Error ? error.message : "完整播放列表加载失败");
+    }
+  }
+}
 const container = ref<HTMLElement>();
 usePageScroll(() => container.value, () => checkScroll());
 function checkScroll(event?: Event) {
@@ -465,7 +491,7 @@ onUnmounted(() => {
           :current-id="currentId"
           :playing="playing"
           :favorite-ids="favoriteIds"
-          @play="(track, list) => emit('play', track, list)"
+          @play="playList"
           @favorite="emit('favorite', $event)"
           @enqueue="(track, next) => emit('enqueue', track, next)"
           @notify="emit('notify', $event)"
@@ -479,7 +505,7 @@ onUnmounted(() => {
               class="primary"
               type="primary"
               :disabled="!tracks.length"
-              @click="emit('play', tracks[0], tracks)"
+              @click="playList(tracks[0], tracks)"
               ><AppIcon name="play" :size="15" />播放全部</el-button
             >
           </template>

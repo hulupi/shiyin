@@ -10,8 +10,20 @@ import { editSource, importSource, listSources, requestSource, saveSourceSetting
 import { read, write } from './storage';
 
 const scheduler = new SourceScheduler();
+const historyLimit = 200;
 const qualities = ['flac24bit', 'flac', '320k', '128k'];
 interface Playlist { id: string; name: string; trackIds: string[]; createdAt: string }
+
+function readHistory() {
+  const stored = read<unknown[]>('history', []);
+  const history = [...new Set(stored.filter((id): id is string => typeof id === 'string' && id.length > 0))]
+    .slice(0, historyLimit);
+  if (history.length !== stored.length) {
+    try { write('history', history); }
+    catch { /* The list remains usable even if storage is unavailable. */ }
+  }
+  return history;
+}
 
 async function resolve(id: string, quality: string, exclude: string[], signal?: AbortSignal) {
   const track = getOnlineTrack(id);
@@ -68,7 +80,8 @@ async function resolve(id: string, quality: string, exclude: string[], signal?: 
     throw new Error(timedOut ? '音源取链超时，请检查手机网络或代理后重试' : '音源未能解析这首歌，请尝试其他歌曲或音质');
   });
   signal?.throwIfAborted();
-  await saveOnlineTrack(track);
+  // A storage failure must not prevent playback of an already resolved stream.
+  try { await saveOnlineTrack(track); } catch { /* Storage already logged the failure. */ }
   return { mode: 'online', sourceId: resolved.sourceId, quality: resolved.quality,
     sourceName: sources.find(source => source.id === resolved.sourceId)?.name || '在线音源',
     audioUrl, lyricUrl: '/online/' + encodeURIComponent(id) + '/lyrics' };
@@ -123,7 +136,7 @@ export async function requestAndroidApi(path: string, init: RequestInit) {
   switch (resource) {
     case 'library':
       return { directories: [], tracks: [], onlineTracks: Object.values(onlineTracks).map(publicOnlineTrack),
-        favorites: await getAndroidFavorites(), history: read<string[]>('history', []),
+        favorites: await getAndroidFavorites(), history: readHistory(),
         scan: { running: false, scanned: 0, failed: 0, errors: [] } };
     case 'charts':
       return action ? chartTracks(id, action, page, refresh) : { charts: await listCharts(id, refresh) };
@@ -184,11 +197,11 @@ export async function requestAndroidApi(path: string, init: RequestInit) {
       return query.has('feedback') ? { favorites } : favorites;
     }
     case 'history': {
-      const current = read<string[]>('history', []);
       let updated: string[] = [];
       if (method !== 'DELETE') {
         await saveOnlineTrack(getOnlineTrack(id));
-        updated = [id, ...current.filter(item => item !== id)];
+        const current = readHistory();
+        updated = [id, ...current.filter(item => item !== id)].slice(0, historyLimit);
       }
       write('history', updated);
       return updated;

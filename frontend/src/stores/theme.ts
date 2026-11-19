@@ -32,14 +32,8 @@ watch(theme, (value) => {
   }
 }, { immediate: true, flush: "sync" });
 
-const lyricsOpen = ref(false);
-
-export function setLyricsSystemBars(open: boolean) {
-  if (isAndroidOnline) lyricsOpen.value = open;
-}
-
 if (isAndroidOnline) {
-  watch([theme, lyricsOpen], ([value, open]) => {
+  watch(theme, value => {
     const light = value === "light";
     const header = light ? "#ffffff" : "#101713";
     const player = light ? "#eff5ef" : "#161e19";
@@ -50,8 +44,8 @@ if (isAndroidOnline) {
     html.style.setProperty("--android-lyrics-edge", lyrics);
 
     void systemBars.setAppearance({
-      status: open ? lyrics : header,
-      navigation: open ? lyrics : player,
+      status: header,
+      navigation: player,
       darkIcons: light,
     })
       .catch(error => console.warn("Unable to update Android system bars", error));

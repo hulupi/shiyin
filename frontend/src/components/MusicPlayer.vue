@@ -2,7 +2,6 @@
 import { preferredVariant, trackCover, variantQualityName } from "../services/music";
 import { cachedKuwoArtwork } from "../android/artwork";
 import { useTrackArtwork } from "../stores/useTrackArtwork";
-import { setLyricsSystemBars } from "../stores/theme";
 import { androidPlayback, type AndroidPlaybackItem, type AndroidPlaybackState } from "../android/playback";
 import { isAndroidOnline } from "../services/platform";
 import { appUrl } from "../services/urls";
@@ -190,7 +189,10 @@ async function prepareNext() {
       tailId = item.id;
     }
   } finally {
-    if (prefetchController === controller) prefetchController = undefined;
+    if (prefetchController === controller) {
+      prefetchController = undefined;
+      runNative("state");
+    }
   }
 }
 
@@ -240,6 +242,8 @@ function applyNativeState(state: AndroidPlaybackState) {
     void prepareNext();
   } else if (!state.playing) playing.value = false;
 
+  // The pending item can still extend an exhausted native queue.
+  if (state.ended && prefetchController) return;
   if (!resolving.value && (state.ended || state.failed) && nativeFinished !== state.id) {
     nativeFinished = state.id;
     if (state.failed) playbackError();
@@ -320,8 +324,6 @@ if (desktopPlayback) {
   onMounted(() => window.addEventListener("beforeunload", savePlayback));
   onUnmounted(() => window.removeEventListener("beforeunload", savePlayback));
 }
-watch(showLyrics, open => { if (open) setLyricsSystemBars(true); }, { flush: "sync" });
-onUnmounted(() => setLyricsSystemBars(false));
 
 const lyricContainer = ref<HTMLElement>();
 const followLyrics = ref(true);
@@ -769,7 +771,6 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
     :close-on-click-modal="false"
     append-to-body
     @opened="followCurrentLyric"
-    @closed="!showLyrics && setLyricsSystemBars(false)"
     class="lyrics-dialog"
     title="正在播放"
     modal-class="lyrics-modal"
@@ -2101,11 +2102,11 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   pointer-events: none;
 }
 :global(html.android .lyrics-dialog.el-dialog) {
-  background: var(--android-lyrics-edge);
+  background: linear-gradient(to bottom, var(--android-header-background), var(--android-lyrics-edge), var(--android-player-background));
 }
 :global(html.android .lyrics-dialog .lyrics-overlay) {
   background:
-    linear-gradient(to bottom, var(--android-lyrics-edge), transparent 12%, transparent 88%, var(--android-lyrics-edge)),
+    linear-gradient(to bottom, var(--android-header-background), transparent 12%, transparent 88%, var(--android-player-background)),
     radial-gradient(ellipse at 25% 35%, var(--day-selected, #244330), var(--android-lyrics-edge) 75%);
 }
 :global(.lyrics-dialog .close-lyrics) {

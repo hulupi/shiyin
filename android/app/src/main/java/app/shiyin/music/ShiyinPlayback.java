@@ -57,7 +57,9 @@ public final class ShiyinPlayback extends Plugin {
         state.put("playing", player.isPlaying());
         state.put("buffering", player.getPlayWhenReady() && player.getPlaybackState() == Player.STATE_BUFFERING);
         state.put("ended", player.getPlaybackState() == Player.STATE_ENDED);
-        state.put("failed", player.getPlayerError() != null);
+        // The service advances past a failed item when it has another item ready.
+        state.put("failed", player.getPlayerError() != null
+            && !(player.getPlayWhenReady() && player.hasNextMediaItem()));
         state.put("position", player.getCurrentPosition() / 1000.0);
         state.put("duration", player.getDuration() == C.TIME_UNSET ? 0 : player.getDuration() / 1000.0);
         return state;
@@ -113,7 +115,10 @@ public final class ShiyinPlayback extends Plugin {
             if (applied) {
                 int previous = player.getCurrentMediaItemIndex();
                 if (previous > 0) player.removeMediaItems(0, previous);
+                boolean resumeAtNext = player.getPlaybackState() == Player.STATE_ENDED
+                    && player.getPlayWhenReady();
                 player.addMediaItem(upcoming);
+                if (resumeAtNext && player.hasNextMediaItem()) player.seekToNextMediaItem();
             }
             JSObject result = new JSObject();
             result.put("applied", applied);
