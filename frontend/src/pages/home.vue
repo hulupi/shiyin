@@ -155,13 +155,7 @@ function openPlaylist(playlist: Chart) {
     <section class="home-section" :aria-busy="loading">
       <div class="home-section-heading">
         <h2><AppIcon name="发现歌单" :size="20" />推荐歌单</h2>
-        <div class="home-tools">
-          <label class="home-control">
-            <AppIcon name="搜索" :size="16" />
-            <input v-model="keyword" type="search" aria-label="搜索当前页歌单" placeholder="搜索当前页歌单" />
-          </label>
-          <button class="home-control" type="button" @click="navigate('发现歌单', platform)">全部歌单</button>
-        </div>
+       
       </div>
       <p v-if="playlistError" class="home-status" role="status">推荐歌单加载失败，请刷新重试</p>
       <ListSkeleton v-else-if="loading && !playlists.length" class="home-grid" layout="covers" :count="12" label="正在加载推荐歌单" />

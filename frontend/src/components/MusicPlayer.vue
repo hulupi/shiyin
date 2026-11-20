@@ -23,6 +23,7 @@ import {
   toggleFavorite as favorite,
 } from "../stores/library";
 import { requestApi as api } from "../services/api";
+import { loadPlaybackDownloadSettings, playbackDownloadSettings } from "../stores/playbackDownload";
 import { notify, reportError as message, inform } from "../services/feedback";
 const emit = defineEmits<{
   current: [track: Track | null];
@@ -65,6 +66,12 @@ watch(
   (id) => (playbackLoadingId.value = id),
 );
 let playbackController: AbortController | undefined;
+let playbackDownloadAttempted = false;
+onMounted(() => {
+  if (!isAndroidOnline && !playbackDownloadSettings.value) {
+    void loadPlaybackDownloadSettings().catch(() => {});
+  }
+});
 let usedSourceId = "";
 let playbackActivityId: string | undefined;
 let playbackActivityReported = false;
@@ -475,6 +482,7 @@ async function play(track: Track, replace = true, retry = false, position?: numb
   playbackUrl.value = "";
   playbackActivityReported = false;
   if (!retry) {
+    playbackDownloadAttempted = false;
     playbackActivityId = undefined;
     failedSources = [];
     refreshedSource = false;
@@ -682,6 +690,40 @@ function seek(value: number) {
     audio.value.currentTime = Math.max(0, Number.isFinite(length) ? Math.min(length, value) : value);
     progress.value = audio.value.currentTime;
   }
+}
+function checkPlaybackDownload() {
+  const settings = playbackDownloadSettings.value;
+  const track = current.value;
+  const media = audio.value;
+  if (!settings?.autoDownloadPlayback || playbackDownloadAttempted || !track?.online ||
+      !media || !playbackUrl.value || media.currentSrc !== media.src ||
+      !Number.isFinite(media.duration) || media.duration <= 0) return;
+
+  let secondsPlayed = 0;
+  const ranges = media.played;
+  for (let index = 0; index < ranges.length; index++) {
+    secondsPlayed += ranges.end(index) - ranges.start(index);
+  }
+  // Audio end timestamps can differ slightly from the declared duration.
+  const complete = media.ended && secondsPlayed > 0 &&
+    media.duration - secondsPlayed <= Math.min(0.05, media.duration * 0.001);
+  const percent = complete ? 100 : Math.min(100, secondsPlayed / media.duration * 100);
+  if (percent < settings.playbackDownloadPercent) return;
+
+  playbackDownloadAttempted = true;
+  void api("/downloads/playback", {
+    method: "POST",
+    body: JSON.stringify({ trackId: track.id, percent }),
+  }).catch(error => message(new Error("完播下载失败：" + error.message)));
+}
+function updateAudioProgress() {
+  progress.value = audio.value?.currentTime || 0;
+  checkPlaybackDownload();
+}
+function onAudioEnded() {
+  buffering.value = false;
+  checkPlaybackDownload();
+  next(1, true);
 }
 function loadedMetadata() {
   duration.value = Number.isFinite(audio.value?.duration) ? audio.value!.duration : 0;
@@ -1031,10 +1073,10 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
     @playing="recordPlay"
     @waiting="buffering = Boolean(audio && !audio.paused)"
     @pause="playing = false; buffering = false"
-    @timeupdate="progress = audio?.currentTime || 0"
+    @timeupdate="updateAudioProgress"
     @ratechange="syncSystemMedia"
     @loadedmetadata="loadedMetadata"
-    @ended="buffering = false; next(1, true)"
+    @ended="onAudioEnded"
     @error="playbackError"
   />
 </template>

@@ -1,5 +1,7 @@
+import { qqHotSearch } from '../catalog/hot-search.js';
 import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
+import { networkInterfaces } from 'node:os';
 import { state, publicTrack, type StoredTrack } from '../../db/store.js';
 import { authorizedFile } from '../library/service.js';
 import { sources, importSource, importSourceUrl, checkSource, removeSource, requestSource, saveSources, cancelSource, sourceSettings, saveSourceSettings } from '../sources/service.js';
@@ -23,7 +25,22 @@ const qualityOrder=['flac24bit','flac','320k','128k'];
 
 export async function resolveOnlineAudio(track:OnlineTrack,quality:string,excluded:string[]=[],signal?:AbortSignal,rejectedSourcesByQuality?:ReadonlyMap<string,ReadonlySet<string>>,activity?:SourceActivity) {
   if(!qualityOrder.includes(quality))throw new Error('无效音质');
-  const result = await scheduler.resolve(sources.filter(entry=>!excluded.includes(entry.id)).map(entry=>({
+  signal?.throwIfAborted();
+  const checkNetwork = () => {
+    if (!Object.values(networkInterfaces()).some(addresses => addresses?.some(address => !address.internal)))
+      throw new Error('拾音服务未连接网络，请检查服务所在设备的网络后重试');
+  };
+  checkNetwork();
+  const qualities = qualityOrder.slice(qualityOrder.indexOf(quality));
+  const enabled = sources.filter(entry => entry.enabled);
+  if (!enabled.length) throw new Error('没有已启用的音源，请在设置中导入或启用音源');
+  const compatible = enabled.filter(entry => {
+    const capability = entry.capabilities[track.platform];
+    return capability?.actions.includes('musicUrl') && capability.qualitys.some(item => qualities.includes(item));
+  });
+  if (!compatible.length) throw new Error('已启用音源不支持这首歌的平台或所选音质');
+  let timedOut = false;
+  const result = await scheduler.resolve(compatible.filter(entry=>!excluded.includes(entry.id)).map(entry=>({
     id:entry.id,get enabled(){return entry.enabled;},priority:entry.priority,
     platforms:Object.keys(entry.capabilities).filter(platform=>entry.capabilities[platform].actions.includes('musicUrl')),
     qualities:entry.capabilities[track.platform]?.qualitys||[],
@@ -31,9 +48,20 @@ export async function resolveOnlineAudio(track:OnlineTrack,quality:string,exclud
       const result=await requestSource(entry,{source:track.platform,action:'musicUrl',info:{type:request.quality,musicInfo:track.musicInfo}},signal);
       if(typeof result!=='string')throw new Error('音源没有返回播放链接');return result;
     },
-  })),{platform:track.platform,songId:track.songId},{qualities:qualityOrder.slice(qualityOrder.indexOf(quality)),signal,rejectedSourcesByQuality,validate:validateAudio,
+  })),{platform:track.platform,songId:track.songId},{qualities,signal,rejectedSourcesByQuality,validate:validateAudio,
     onAttempt: activity && ((id, quality) => activity.attempt(sourceName(id), quality)),
-    onFailure: activity && ((id, quality, reason) => activity.record('source-failed', { source: sourceName(id), quality, reason })),
+    onFailure: (id, quality, reason) => {
+      timedOut ||= reason === 'timeout';
+      activity?.record('source-failed', { source: sourceName(id), quality, reason });
+    },
+  }).catch(error => {
+    signal?.throwIfAborted();
+    checkNetwork();
+    if (timedOut || error?.name === 'TimeoutError')
+      throw new Error('音源取链超时，请检查拾音服务的网络后重试');
+    if (error instanceof AggregateError)
+      throw new Error('音源未能播放这首歌，请稍后重试或切换音源');
+    throw error;
   });
   const name = sourceName(result.sourceId);
   activity?.record('resolved', { source: name, quality: result.quality });
@@ -108,6 +136,9 @@ onlineRouter.get('/catalog/track-album/:id',async(req,res)=>{
     return res.status(404).json({error:'这首歌没有可用的专辑信息'});
   const tracks=await albumTracks(platform,albumId,controller.signal,track.album,track.artist);
   res.json({name:track.album,tracks});
+});
+onlineRouter.get('/catalog/hot-search', async (_req, res) => {
+  res.json({ keywords: await qqHotSearch() });
 });
 onlineRouter.get('/catalog/search',async(req,res)=>{
   const keyword=String(req.query.q||'').trim();if(!keyword||keyword.length>100)return res.status(400).json({error:'请输入 1–100 字的关键词'});

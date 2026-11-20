@@ -13,6 +13,7 @@ import { isAndroidOnline } from "../services/platform";
 import { loadPlaybackList } from "../services/playbackList";
 import AppIcon from "../components/AppIcon.vue";
 import SongTable from "../components/SongTable.vue";
+import ImportPlaylistButton from "../components/ImportPlaylistButton.vue";
 interface Chart {
   id: string;
   name: string;
@@ -454,19 +455,7 @@ onUnmounted(() => {
         >
         <RefreshButton :disabled="loading" @click="refresh" />
       </div>
-      <div v-if="!selected" class="playlist-search-summary" aria-live="polite">
-        <template v-if="submittedSearch"
-          >{{ platformName }} · “{{ submittedSearch }}”<span v-if="!loading && !error">
-            · {{ searchTotal }} 个歌单</span
-          ></template
-        ><template v-else>{{
-          category === "all"
-            ? "精选歌单"
-            : filterGroups
-                .flatMap((group) => group.items)
-                .find((item) => item.id === category)?.name || "精选歌单"
-        }}</template>
-      </div>
+      
       <template v-if="selected">
         <div class="chart-detail-heading">
           <div class="chart-detail-copy">
@@ -508,6 +497,12 @@ onUnmounted(() => {
               @click="playList(tracks[0], tracks)"
               ><AppIcon name="play" :size="15" />播放全部</el-button
             >
+            <ImportPlaylistButton
+              v-if="tracks.length"
+              :key="platform + ':' + selected.id"
+              :name="selected.name"
+              :source="{ platform, id: selected.id }"
+            />
           </template>
           <template #empty>
             <div class="charts-state">

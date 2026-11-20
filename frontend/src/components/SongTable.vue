@@ -14,6 +14,7 @@ import {
 import TrackCover from "./TrackCover.vue";
 import TrackActions from "./TrackActions.vue";
 import BatchTrackActions from "./BatchTrackActions.vue";
+import ImportPlaylistButton from "./ImportPlaylistButton.vue";
 import { requestApi as api } from "../services/api";
 import AppIcon from "./AppIcon.vue";
 const props = withDefaults(
@@ -381,6 +382,7 @@ function clock(seconds: number) {
     <div v-else class="album-dialog-content">
       <div class="song-batch-toolbar">
         <el-button type="primary" @click="emit('play', albumTracks[0], albumTracks)">播放全部</el-button>
+        <ImportPlaylistButton :name="albumTitle" :tracks="albumTracks" />
         <BatchTrackActions :tracks="albumTracks" whole-album />
       </div>
       <SongTable :tracks="albumTracks" :current-id="currentId" :playing="playing"

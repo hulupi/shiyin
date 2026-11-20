@@ -14,6 +14,7 @@ const props = defineProps<{
   local?: boolean;
   hideToolbar?: boolean;
   favorites?: boolean;
+  plainEmpty?: boolean;
   trackCount?: number;
   directoryCount?: number;
   artists?: number;
@@ -98,7 +99,10 @@ watch(
         >
       </template>
       <template #empty>
-        <div class="empty-state">
+        <div v-if="plainEmpty && !query.trim()" class="empty-state">
+          <h2>暂无数据</h2>
+        </div>
+        <div v-else class="empty-state">
           <div class="empty-icon"><AppIcon :name="favorites ? '我的收藏' : '本地音乐'" :size="40" /></div>
           <h2>
             {{
@@ -116,7 +120,7 @@ watch(
                 : "添加 NAS 音乐目录，自动整理歌曲、封面与歌词。"
             }}
           </p>
-          <el-button v-if="!favorites"
+          <el-button v-if="!favorites && !plainEmpty"
             class="primary"
             @click="emit('navigate', '设置')"
             type="primary"
@@ -125,10 +129,10 @@ watch(
         </div>
       </template>
     </SongTable>
-    <div v-if="!local" class="list-footer">
+    <!-- <div v-if="!local" class="list-footer">
       {{ tracks.length }} 首歌曲 <span>·</span>
       {{ scanRunning ? "扫描进行中" : "私人音乐，自在聆听" }}
-    </div>
+    </div> -->
   </div>
 </template>
 

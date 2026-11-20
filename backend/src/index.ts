@@ -30,7 +30,9 @@ if (gatewayPrefix) {
     next();
   });
 }
-app.disable('x-powered-by'); app.use('/api/sources/import', express.json({ limit: '7mb' })); app.use(express.json({ limit: '16kb' }));
+app.disable('x-powered-by'); app.use('/api/sources/import', express.json({ limit: '7mb' }));
+app.post('/api/playlists/import', express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '16kb' }));
 app.use('/api', (req,res,next) => {
   const writes = !['GET','HEAD'].includes(req.method);
   // The fnOS gateway may rewrite Host. A custom header forces foreign browser

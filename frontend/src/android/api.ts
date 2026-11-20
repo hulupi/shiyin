@@ -1,10 +1,11 @@
+import { qqHotSearch } from '../../../backend/src/modules/catalog/hot-search';
 import { chartTracks, listCharts } from '../../../backend/src/modules/catalog/charts';
-import { discoverFilters, discoverPlaylists, discoverTracks, mobileKugouPlaylists, searchPlaylists } from '../../../backend/src/modules/catalog/discover';
+import { collectDiscoverTracks, discoverFilters, discoverPlaylists, discoverTracks, mobileKugouPlaylists, searchPlaylists } from '../../../backend/src/modules/catalog/discover';
 import { albumPlatforms, albumTracks, searchAlbums, validAlbumId } from '../../../backend/src/modules/catalog/albums';
 import { enrichOnlineTrack, getOnlineTrack, onlineTracks, publicOnlineTrack, saveOnlineTrack, searchCatalog } from '../../../backend/src/modules/catalog/service';
 import { getOnlineLyrics } from '../../../backend/src/modules/lyrics/online';
 import { SourceScheduler } from '../../../backend/src/modules/sources/scheduler';
-import { prepareAudio } from './network';
+import { prepareAudio, requireAndroidConnection } from './network';
 import { changeAndroidFavorites, getAndroidFavorites } from './favorites';
 import { editSource, importSource, listSources, requestSource, saveSourceSettings, sourceSettings, sources } from './sources';
 import { read, write } from './storage';
@@ -29,10 +30,13 @@ async function resolve(id: string, quality: string, exclude: string[], signal?: 
   const track = getOnlineTrack(id);
   const position = qualities.indexOf(quality);
   if (position < 0) throw new Error('无效音质');
+  await requireAndroidConnection(signal);
   const acceptedQualities = qualities.slice(position);
-  const candidates = sources.filter(source => {
+  const enabled = sources.filter(source => source.enabled);
+  if (!enabled.length) throw new Error('没有已启用的音源，请在设置中导入或启用音源');
+  const candidates = enabled.filter(source => {
     const capability = source.capabilities[track.platform];
-    return source.enabled && !exclude.includes(source.id) && capability?.actions.includes('musicUrl')
+    return !exclude.includes(source.id) && capability?.actions.includes('musicUrl')
       && capability.qualitys.some(item => acceptedQualities.includes(item));
   });
   if (!candidates.length) {
@@ -69,8 +73,8 @@ async function resolve(id: string, quality: string, exclude: string[], signal?: 
         throw error;
       }
     },
-  }).catch(error => {
-    signal?.throwIfAborted();
+  }).catch(async error => {
+    await requireAndroidConnection(signal);
     if (error instanceof DOMException && error.name === 'TimeoutError') timedOut = true;
     if (gotLink) {
       throw new Error(unsupportedProtocol
@@ -89,6 +93,24 @@ async function resolve(id: string, quality: string, exclude: string[], signal?: 
 
 async function playlistRequest(method: string, id: string, action: string, trackId: string, body: Record<string, any>) {
   const playlists = read<Playlist[]>('playlists', []);
+  if (method === 'POST' && id === 'import' && !action) {
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (!name) throw new Error('歌单名称不能为空');
+    if (playlists.length >= 100) throw new Error('最多支持 100 个歌单');
+    const ids = body.trackIds;
+    if (!body.source && (!Array.isArray(ids) || ids.length > 10000 || ids.some(id => typeof id !== 'string')))
+      throw new Error('请选择 1–10000 首歌曲');
+    const tracks = body.source
+      ? await collectDiscoverTracks(body.source.platform, body.source.id)
+      : [...new Set<string>(ids)].map(getOnlineTrack);
+    if (!tracks.length) throw new Error('歌单没有可导入的歌曲');
+    for (const track of tracks) await saveOnlineTrack(track);
+    const current = read<Playlist[]>('playlists', []);
+    if (current.length >= 100) throw new Error('最多支持 100 个歌单');
+    const entry = { id: crypto.randomUUID(), name, trackIds: tracks.map(track => track.id), createdAt: new Date().toISOString() };
+    write('playlists', [...current, entry]);
+    return entry;
+  }
   if (!id) {
     if (method === 'GET') {
       return playlists.map(item => {
@@ -104,6 +126,13 @@ async function playlistRequest(method: string, id: string, action: string, track
   }
   const entry = playlists.find(item => item.id === id);
   if (!entry) throw new Error('歌单不存在');
+  if (method === 'PATCH' && !action) {
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (!name || name.length > 80) throw new Error('歌单名称需要为 1–80 字');
+    entry.name = name;
+    write('playlists', playlists);
+    return entry;
+  }
   if (method === 'GET') {
     return { ...entry, tracks: entry.trackIds.flatMap(id => onlineTracks[id] ? [publicOnlineTrack(onlineTracks[id])] : []) };
   }
@@ -153,6 +182,7 @@ export async function requestAndroidApi(path: string, init: RequestInit) {
       if (id === 'kg') return mobileKugouPlaylists(page, refresh);
       return discoverPlaylists(id, page, refresh, query.get('sort') || undefined, query.get('category') || 'all');
     case 'catalog':
+      if (id === 'hot-search') return { keywords: await qqHotSearch() };
       if (id === 'search') return searchCatalog(query.get('q') || '', query.get('platform') || 'all', page, signal, Number(query.get('pageSize') || 50), true);
       if (id === 'albums') {
         const platform = query.get('platform') || 'wy';

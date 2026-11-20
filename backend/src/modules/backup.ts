@@ -2,14 +2,14 @@ import { Router, json } from 'express';
 import { deleteScript, readScript, replaceRecords, writeScript, loadPlaylists, loadSetting, saveIds, savePlaylists, saveSetting, transaction, upsertRecord } from '../db/database.js';
 import { state } from '../db/store.js';
 import { onlineTracks, type OnlineTrack } from './catalog/service.js';
-import { downloadPreferences, isFilenameFormat, reloadDownloadSettings } from './downloads/service.js';
+import { downloadPreferences, isFilenameFormat, isPlaybackDownloadPercent, reloadDownloadSettings } from './downloads/service.js';
 import { reloadPlaylists } from './playlists/service.js';
 import { listSourceActivity, reloadSourceActivity } from './sources/activity.js';
 import { applyRestoredSources, maxSourceBytes, platforms, qualities, scriptInfo, sources, sourceSettings, type SourceEntry } from './sources/service.js';
 
 const format = 'shiyin-backup';
 const maxBytes = 32 * 1024 * 1024;
-const booleanSettings = ['saveLyrics', 'embedMetadata', 'autoDownloadFavorites'] as const;
+const booleanSettings = ['saveLyrics', 'embedMetadata', 'autoDownloadFavorites', 'autoDownloadPlayback'] as const;
 type Playlist = Parameters<typeof savePlaylists>[0][number];
 
 function record(value: unknown): Record<string, unknown> {
@@ -85,7 +85,11 @@ function readOnlineTrack(value: unknown): OnlineTrack {
 
 function readDownloadPreferences(value: unknown) {
   const item = record(value);
-  const preferences: Record<string, string | boolean> = {};
+  const preferences: Record<string, string | boolean | number> = {};
+  if (item.playbackDownloadPercent !== undefined) {
+    if (!isPlaybackDownloadPercent(item.playbackDownloadPercent)) invalid();
+    preferences.playbackDownloadPercent = item.playbackDownloadPercent;
+  }
   if (item.quality !== undefined) {
     const quality = string(item.quality);
     if (!qualities.includes(quality)) invalid();

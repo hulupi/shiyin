@@ -21,6 +21,10 @@ export function isFilenameFormat(value: unknown): value is FilenameFormat {
   return filenameFormats.some(format => format === value);
 }
 
+export function isPlaybackDownloadPercent(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 100;
+}
+
 interface DownloadTask { id:string;trackId:string;title:string;artist:string;directoryId:string;quality:string;filenameFormat?:FilenameFormat;saveLyrics?:boolean;embedMetadata?:boolean;actualQuality?:string;format?:string;status:'queued'|'resolving'|'downloading'|'tagging'|'completed'|'failed'|'cancelled';bytes:number;total:number;createdAt:string;path?:string;error?:string;sourceName?:string;lyricPath?:string;coverPath?:string;embeddedLyrics?:boolean;embeddedCover?:boolean;warnings?:string[] }
 const tasks:DownloadTask[]=loadRecords<DownloadTask>('downloads');
 for(const task of tasks)if(['resolving','downloading','tagging'].includes(task.status)){task.status=task.path?'completed':'failed';task.error=task.path?undefined:'服务已重启，请重试下载';}
@@ -30,7 +34,7 @@ const running=new Map<string,AbortController>();
 function cleanName(value:string){return value.replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').replace(/[. ]+$/g,'').slice(0,120)||'歌曲';}
 function pump(){for(const task of tasks){if(running.size>=2)break;if(task.status!=='queued'||running.has(task.id))continue;const controller=new AbortController();running.set(task.id,controller);void run(task,controller.signal).catch(error=>{task.status='failed';task.error=error instanceof Error?error.message:'任务保存失败';}).finally(()=>{running.delete(task.id);pump();});}}
 const downloadQualities = ['flac24bit', 'flac', '320k', '128k'];
-const defaultSettings = { filenameFormat: 'title-artist' as FilenameFormat, directory: '', quality: 'flac24bit', saveLyrics: true, embedMetadata: true, autoDownloadFavorites: false };
+const defaultSettings = { filenameFormat: 'title-artist' as FilenameFormat, directory: '', quality: 'flac24bit', saveLyrics: true, embedMetadata: true, autoDownloadFavorites: false, autoDownloadPlayback: false, playbackDownloadPercent: 90 };
 let downloadSettings = { ...defaultSettings, ...loadSetting<Partial<typeof defaultSettings>>('downloads', {}) };
 
 export function downloadPreferences() {
@@ -168,11 +172,13 @@ export function cancelDirectoryDownloads(directoryId:string){for(const task of t
 export const downloadRouter=Router();
 downloadRouter.get('/downloads/settings', (_req, res) => res.json(downloadSettings));
 downloadRouter.patch('/downloads/settings', async (req, res) => {
-  const { directory, quality, filenameFormat, saveLyrics, embedMetadata, autoDownloadFavorites } = req.body ?? {};
+  const { directory, quality, filenameFormat, saveLyrics, embedMetadata, autoDownloadFavorites,
+    autoDownloadPlayback, playbackDownloadPercent } = req.body ?? {};
   if ((directory !== undefined && typeof directory !== 'string') ||
       (quality !== undefined && !downloadQualities.includes(quality)) ||
       (filenameFormat !== undefined && !isFilenameFormat(filenameFormat)) ||
-      [saveLyrics, embedMetadata, autoDownloadFavorites].some(value => value !== undefined && typeof value !== 'boolean'))
+      (playbackDownloadPercent !== undefined && !isPlaybackDownloadPercent(playbackDownloadPercent)) ||
+      [saveLyrics, embedMetadata, autoDownloadFavorites, autoDownloadPlayback].some(value => value !== undefined && typeof value !== 'boolean'))
     return res.status(400).json({ error: '无效的下载设置' });
 
   const root = directory?.trim() ? await writableDirectory(directory.trim()) : directory?.trim();
@@ -186,6 +192,8 @@ downloadRouter.patch('/downloads/settings', async (req, res) => {
     saveLyrics: saveLyrics ?? downloadSettings.saveLyrics,
     embedMetadata: embedMetadata ?? downloadSettings.embedMetadata,
     autoDownloadFavorites: autoDownloadFavorites ?? downloadSettings.autoDownloadFavorites,
+    autoDownloadPlayback: autoDownloadPlayback ?? downloadSettings.autoDownloadPlayback,
+    playbackDownloadPercent: playbackDownloadPercent ?? downloadSettings.playbackDownloadPercent,
   };
   transaction(() => {
     if (entry) saveSetting('downloadDirectories', [...downloadDirectories, entry]);
@@ -242,6 +250,20 @@ export async function downloadOnFavorite(track?: OnlineTrack) {
     return { status: 'error', message: error instanceof Error ? error.message : '无法加入下载队列' };
   }
 }
+
+downloadRouter.post('/downloads/playback', async (req, res) => {
+  const { trackId, percent } = req.body ?? {};
+  if (typeof trackId !== 'string' || !trackId.startsWith('online:') ||
+      typeof percent !== 'number' || !Number.isFinite(percent) || percent < 0 || percent > 100) {
+    return res.status(400).json({ error: '无效的播放进度' });
+  }
+  const settings = downloadSettings;
+  if (!settings.autoDownloadPlayback || percent < settings.playbackDownloadPercent) {
+    return res.json({ status: 'ineligible' });
+  }
+  const task = await queueDownload(getOnlineTrack(trackId), {}, true);
+  res.json({ status: task ? 'queued' : 'skipped' });
+});
 
 downloadRouter.post('/downloads/batch',async(req,res)=>{
   const ids: unknown= req.body.trackIds;

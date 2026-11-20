@@ -3,13 +3,14 @@ import ListSkeleton from "../components/ListSkeleton.vue";
 import PageLayout from "../components/PageLayout.vue";
 defineOptions({ name: "search" });
 import { ElMessage } from "element-plus";
-import { onActivated, onDeactivated, onUnmounted, ref, watch } from "vue";
+import { computed, onActivated, onDeactivated, onUnmounted, ref, watch } from "vue";
 import type { AlbumSearchResult, Track } from "../../../backend/src/contracts";
 import { requestApi as api } from "../services/api";
 import AppIcon from "../components/AppIcon.vue";
 import { appUrl } from "../services/urls";
 import BatchTrackActions from "../components/BatchTrackActions.vue";
 import SongTable from "../components/SongTable.vue";
+import ImportPlaylistButton from "../components/ImportPlaylistButton.vue";
 import { nearScrollEnd, usePageScroll } from "../stores/usePageScroll";
 const props = defineProps<{
   currentId?: string;
@@ -68,6 +69,28 @@ const keyword = ref(""),
   searched = ref(false),
   pageSize = 50,
   submittedKeyword = ref("");
+const hotKeywords = ref<string[]>([]);
+const showHotSearch = computed(() =>
+  mode.value === "songs" && !keyword.value.trim() && !submittedKeyword.value,
+);
+async function loadHotSearch() {
+  if (!showHotSearch.value) return;
+  try {
+    const data = await api("/catalog/hot-search");
+    hotKeywords.value = data.keywords;
+  } catch {
+    // Keep the default search prompt when QQ Music is unavailable.
+  }
+}
+onActivated(loadHotSearch);
+watch(showHotSearch, (visible) => { if (visible) void loadHotSearch(); });
+
+function searchHotKeyword(text: string) {
+  keyword.value = text;
+  platform.value = "tx";
+  void search();
+}
+
 const statuses = ref<
   { platform: string; total: number; error: string | null }[]
 >([]);
@@ -242,6 +265,7 @@ onUnmounted(() => {
             v-model="keyword"
             maxlength="100"
             clearable
+            @clear="search()"
             :placeholder="mode === 'albums' ? '搜索专辑名或歌手' : '搜索歌曲或歌手'"
           /></label
         ><el-button
@@ -285,6 +309,7 @@ onUnmounted(() => {
         <el-button @click="closeAlbum()">返回专辑列表</el-button>
         <strong>{{ selectedAlbum.name }} · {{ selectedAlbum.artist }}</strong>
         <el-button v-if="results.length" @click="emit('play', results[0], results)">播放全部</el-button>
+        <ImportPlaylistButton v-if="results.length" :name="selectedAlbum.name" :tracks="results" />
         <BatchTrackActions v-if="results.length" :tracks="results" whole-album />
       </div>
       <div
@@ -333,6 +358,14 @@ onUnmounted(() => {
         @notify="emit('notify', $event)"
         @navigate="emit('navigate', $event)"
       />
+      <section v-else-if="showHotSearch && hotKeywords.length" class="hot-search" aria-label="热门搜索">
+        <h2>热门搜索 <span>QQ 音乐</span></h2>
+        <div class="hot-search-keywords">
+          <button v-for="text in (isAndroidOnline ? hotKeywords.slice(0, 30) : hotKeywords)" :key="text" type="button" @click="searchHotKeyword(text)">
+            {{ text }}
+          </button>
+        </div>
+      </section>
       <div v-else-if="selectedAlbum || (!loading && !albums.length)" class="empty-state">
         <div class="empty-icon"><AppIcon name="搜索" :size="38" /></div>
         <h2>
@@ -356,6 +389,47 @@ onUnmounted(() => {
 </template>
 
 <style scoped lang="scss">
+.hot-search {
+  overflow-y: auto;
+  margin-right: var(--list-right-inset);
+  padding: clamp(14px, 3vw, 24px);
+  border: 1px solid var(--day-line, #2a3a2e);
+  border-radius: 12px;
+}
+.hot-search h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 0 14px;
+  font-size: 17px;
+}
+.hot-search h2 span {
+  color: var(--day-muted, #8fa497);
+  font-size: 12px;
+  font-weight: 400;
+}
+.hot-search-keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hot-search-keywords button {
+  max-width: 100%;
+  padding: 7px 13px;
+  border: 1px solid var(--day-line, #2a3a2e);
+  border-radius: 999px;
+  background: var(--day-surface-soft, #19281e);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.hot-search-keywords button:hover,
+.hot-search-keywords button:focus-visible {
+  border-color: var(--green);
+}
+
 .album-heading { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .online-search > .album-results {
   flex: 1;
@@ -536,6 +610,10 @@ onUnmounted(() => {
 }
 
 @media (max-width: 700px) {
+  .hot-search-keywords button:nth-child(n + 31) {
+    display: none;
+  }
+
   .search-input {
     width: 100%;
   }
@@ -593,7 +671,7 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.online-search > :not(.song-table) {
+.online-search > :not(.song-table, .hot-search) {
   flex-shrink: 0;
 }
 .search-input :deep(.el-input) {

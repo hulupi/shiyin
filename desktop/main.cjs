@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, Tray, utilityProcess } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Tray, utilityProcess } = require('electron');
 const path = require('node:path');
 const { readFileSync, writeFileSync, renameSync } = require('node:fs');
 const { randomUUID } = require('node:crypto');
@@ -7,6 +7,7 @@ let backend;
 let player;
 let tray;
 let quitting = false;
+const isMac = process.platform === 'darwin';
 
 function showPlayer() {
   if (!player || player.isDestroyed()) return;
@@ -60,7 +61,7 @@ async function start() {
     minWidth: 1000,
     minHeight: 600,
     backgroundColor: '#101311',
-    frame: false,
+    frame: isMac,
     autoHideMenuBar: true,
     webPreferences: {
       sandbox: true,
@@ -70,10 +71,26 @@ async function start() {
       preload: path.join(__dirname, 'title-bar.cjs'),
     },
   });
-  player.setMenu(null);
+  if (!isMac) player.setMenu(null);
   const contents = player.webContents;
   const statePath = path.join(app.getPath('userData'), 'playback.json');
   const isPlayer = (event) => event.sender.id === contents.id;
+  ipcMain.handle('desktop:choose-directory', async (event, defaultPath) => {
+    if (!isPlayer(event) || event.senderFrame !== contents.mainFrame) return null;
+    const result = await dialog.showOpenDialog(player, {
+      properties: ['openDirectory', 'createDirectory'],
+      defaultPath: typeof defaultPath === 'string' ? defaultPath : undefined,
+    });
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+  if (isMac) {
+    nativeTheme.themeSource = 'dark';
+    ipcMain.on('desktop:theme', (event, theme) => {
+      if (isPlayer(event) && (theme === 'light' || theme === 'dark')) {
+        nativeTheme.themeSource = theme;
+      }
+    });
+  }
   ipcMain.on('desktop:read-playback', (event) => {
     if (!isPlayer(event)) { event.returnValue = null; return; }
     try { event.returnValue = JSON.parse(readFileSync(statePath, 'utf8')); } catch { event.returnValue = null; }
@@ -89,7 +106,9 @@ async function start() {
       console.error('无法保存播放状态', error);
     }
   });
-  tray = new Tray(path.join(runtime, 'tray.png'));
+  const trayIcon = nativeImage.createFromPath(path.join(runtime, isMac ? 'trayTemplate.png' : 'tray.png'));
+  if (isMac) trayIcon.setTemplateImage(true);
+  tray = new Tray(trayIcon);
   tray.setToolTip('拾音');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '打开拾音', click: showPlayer },
@@ -101,13 +120,15 @@ async function start() {
     event.preventDefault();
     player.hide();
   });
-  const titleBarCss = readFileSync(path.join(__dirname, 'title-bar.css'), 'utf8');
-  contents.on('dom-ready', () => { void contents.insertCSS(titleBarCss, { cssOrigin: 'user' }); });
-  ipcMain.on('desktop:window-action', (event, action) => {
-    if (!isPlayer(event)) return;
-    if (action === 'minimize') player.minimize();
-    if (action === 'close') player.close();
-  });
+  if (!isMac) {
+    const titleBarCss = readFileSync(path.join(__dirname, 'title-bar.css'), 'utf8');
+    contents.on('dom-ready', () => { void contents.insertCSS(titleBarCss, { cssOrigin: 'user' }); });
+    ipcMain.on('desktop:window-action', (event, action) => {
+      if (!isPlayer(event)) return;
+      if (action === 'minimize') player.minimize();
+      if (action === 'close') player.close();
+    });
+  }
   contents.session.webRequest.onBeforeSendHeaders({ urls: [origin + '/*'] }, (details, callback) => {
     if (details.webContentsId === contents.id) details.requestHeaders['X-Shiyin-Desktop'] = key;
     callback({ requestHeaders: details.requestHeaders });
@@ -128,6 +149,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', showPlayer);
+  if (isMac) app.on('activate', showPlayer);
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', () => {
     quitting = true;

@@ -62,6 +62,7 @@ async function clearHistory() {
       ></template
     >
     <CollectionView
+      plain-empty
       v-model:query="query"
       :tracks="tracks"
       :current-id="currentId"

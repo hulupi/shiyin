@@ -18,6 +18,7 @@
   },
   "build": {
     "appId": "com.shiyin.desktop",
+    "icon": "../fpk/ICON_256.PNG",
     "directories": {
       "output": "dist/local"
     },
@@ -28,8 +29,11 @@
       "title-bar.css"
     ],
     "artifactName": "Shiyin-Local-Setup-${version}-${arch}.${ext}",
+    "mac": {
+      "icon": "build/icon-mac.png"
+    },
     "win": {
-      "signAndEditExecutable": false
+      "signExecutable": false
     },
     "extraResources": [
       {
@@ -40,6 +44,7 @@
           "frontend/**/*",
           "launch.cjs",
           "tray.png",
+          "trayTemplate*.png",
           "package.json"
         ]
       },

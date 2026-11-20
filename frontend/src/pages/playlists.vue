@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { isAndroidOnline } from "../services/platform";
+import { ElMessageBox } from "element-plus";
 import ListSkeleton from "../components/ListSkeleton.vue";
 import {
   computed,
@@ -135,6 +136,27 @@ async function remove(item: Playlist) {
     reportError(error);
   }
 }
+async function rename(item: Playlist) {
+  const result = await ElMessageBox.prompt("输入新的歌单名称", "重命名歌单", {
+    inputValue: item.name,
+    inputValidator: value => !!value?.trim() && value.trim().length <= 80 || "歌单名称需要为 1–80 字",
+    confirmButtonText: "保存",
+    cancelButtonText: "取消",
+    closeOnClickModal: false,
+  }).catch(() => null);
+  if (!result || result.value.trim() === item.name) return;
+  try {
+    const updated = await api("/playlists/" + encodeURIComponent(item.id), {
+      method: "PATCH",
+      body: JSON.stringify({ name: result.value.trim() }),
+    });
+    playlists.value = playlists.value.map(playlist =>
+      playlist.id === item.id ? { ...playlist, name: updated.name } : playlist,
+    );
+  } catch (error) {
+    reportError(error);
+  }
+}
 async function removePlaylistTracks(trackIds: string[]) {
   const id = selected.value;
   if (!id || !trackIds.length) return false;
@@ -252,6 +274,7 @@ onUnmounted(() => controller?.abort());
               :loading="playingPlaylist === item.id"
               @open="navigate('我的歌单', 'wy', item.id)"
               @play="playPlaylist(item)"
+              @rename="rename(item)"
               @remove="remove(item)"
             />
           </div>
@@ -294,15 +317,6 @@ onUnmounted(() => controller?.abort());
               @click="emit('play', tracks[0], tracks)"
               ><AppIcon name="play" :size="16" />播放全部</el-button
             >
-            <el-button
-              v-if="detail"
-              class="detail-delete"
-              aria-label="删除当前歌单"
-              title="删除歌单"
-              @click="remove(detail)"
-              text
-              ><AppIcon name="trash" :size="18"
-            /></el-button>
           </template>
           <template #empty>
             <div v-if="detailError" class="page-state" role="alert">
@@ -416,9 +430,6 @@ onUnmounted(() => controller?.abort());
     color: var(--day-muted, #8fa797);
   }
 }
-.detail-delete {
-  color: var(--day-muted, #879e90);
-}
 .page-state {
   display: flex;
   flex: 1;
@@ -530,16 +541,9 @@ onUnmounted(() => controller?.abort());
   }
 }
 @media (max-width: 700px) {
-  .playlists-page :deep(.song-batch-toolbar > .el-button:not(.detail-delete)) {
-    flex: 0 0 calc((100% - 52px) / 2);
+  .playlists-page :deep(.song-batch-toolbar > .el-button) {
+    flex: 0 0 calc((100% - 8px) / 2);
     padding-inline: 6px;
-  }
-  .playlists-page :deep(.song-batch-toolbar > .detail-delete) {
-    flex: 0 0 36px;
-    padding: 0;
-  }
-  .playlists-page :deep(.song-batch-toolbar:not(:has(.detail-delete)) > .el-button) {
-    flex-basis: calc((100% - 8px) / 2);
   }
   .playlists-page :deep(.song-batch-toolbar > span) {
     order: 1;

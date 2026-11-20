@@ -10,6 +10,12 @@ export async function requestApi(url: string, init: RequestInit = {}) {
   const response = await fetch(appUrl("/api" + url), {
     ...init,
     headers,
+  }).catch(error => {
+    init.signal?.throwIfAborted();
+    if (!(error instanceof TypeError)) throw error;
+    throw new Error(navigator.onLine === false
+      ? "设备未连接网络，请检查网络后重试"
+      : "无法连接拾音服务，请确认服务已启动且当前设备可以访问");
   });
   const result = await response
     .json()

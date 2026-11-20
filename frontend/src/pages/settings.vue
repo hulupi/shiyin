@@ -9,6 +9,7 @@ import SourceActivity from "../components/SourceActivity.vue";
 import BackupSettings from "../components/BackupSettings.vue";
 import ChartSettings from "../components/ChartSettings.vue";
 import { theme } from "../stores/theme";
+import { playbackDownloadSettings, type PlaybackDownloadSettings } from "../stores/playbackDownload";
 import appLogo from "../../../fpk/ICON_256.PNG?url";
 import {
   library,
@@ -90,7 +91,7 @@ async function saveQuality() {
     message(e);
   }
 }
-type DownloadSettings = {
+type DownloadSettings = PlaybackDownloadSettings & {
   directory: string;
   quality: string;
   filenameFormat: "artist-title" | "title-artist";
@@ -108,6 +109,7 @@ onMounted(async () => {
   try {
     const saved: DownloadSettings = await api("/downloads/settings");
     savedDownloads = saved;
+    playbackDownloadSettings.value = saved;
     downloadSettings.value = { ...saved };
   } catch (e) {
     message(e);
@@ -128,6 +130,7 @@ function saveDownloadSetting<Key extends keyof DownloadSettings>(key: Key) {
         body: JSON.stringify({ [key]: value }),
       });
       savedDownloads = saved;
+      playbackDownloadSettings.value = saved;
       if (latestDownloadChanges.get(key) === change && draft[key] === value) draft[key] = saved[key];
     } catch (e) {
       if (latestDownloadChanges.get(key) === change && draft[key] === value) draft[key] = savedDownloads[key];
@@ -135,7 +138,38 @@ function saveDownloadSetting<Key extends keyof DownloadSettings>(key: Key) {
     }
   });
 }
-const musicDirectoryPlaceholder = isDesktop
+const chooseDirectory = (window as Window & {
+  desktopChooseDirectory?: (defaultPath: string) => Promise<string | null>;
+}).desktopChooseDirectory;
+const choosingDirectory = ref(false);
+
+async function pickDirectory(target: "music" | "download") {
+  if (!chooseDirectory || choosingDirectory.value) return;
+  choosingDirectory.value = true;
+  try {
+    const path = await chooseDirectory(target === "music" ? directory.value : downloadSettings.value?.directory ?? "");
+    if (path === null) return;
+    if (target === "music") {
+      directory.value = path;
+    } else if (downloadSettings.value) {
+      updateDownloadDirectory(path);
+    }
+  } catch (e) {
+    message(e);
+  } finally {
+    choosingDirectory.value = false;
+  }
+}
+
+function updateDownloadDirectory(path: string) {
+  if (!downloadSettings.value) return;
+  downloadSettings.value.directory = path;
+  saveDownloadSetting("directory");
+}
+
+const musicDirectoryPlaceholder = chooseDirectory
+  ? "请选择本机音乐文件夹"
+  : isDesktop
   ? "输入本机音乐文件夹路径，例如 D:\\Music"
   : "输入 NAS 上的音乐文件夹路径，例如 /vol1/1000/music";
 
@@ -187,8 +221,13 @@ const musicDirectoryPlaceholder = isDesktop
               <el-input
                 v-model="directory"
                 :placeholder="musicDirectoryPlaceholder"
-                clearable
-              />
+                :readonly="!!chooseDirectory"
+                :clearable="!chooseDirectory"
+              >
+                <template v-if="chooseDirectory" #append>
+                  <el-button :disabled="choosingDirectory" @click="pickDirectory('music')">选择文件夹</el-button>
+                </template>
+              </el-input>
             </el-form-item>
             <el-button
               :disabled="!directory.trim() || directory.trim() === savedDirectory?.path"
@@ -216,7 +255,7 @@ const musicDirectoryPlaceholder = isDesktop
             >
           </div>
           <div v-if="!library.directories.length" class="inline-empty">
-            尚未添加目录，输入路径即可开始建立音乐库。
+            {{ chooseDirectory ? "尚未添加目录，选择文件夹后保存并扫描。" : "尚未添加目录，输入路径即可开始建立音乐库。" }}
           </div>
           <div class="scan-status">
             <span
@@ -277,8 +316,19 @@ const musicDirectoryPlaceholder = isDesktop
                 v-model="downloadSettings.directory"
                 placeholder="留空时使用音乐库目录"
                 @change="saveDownloadSetting('directory')"
-                clearable
-              />
+                :readonly="!!chooseDirectory"
+                :clearable="!chooseDirectory"
+              >
+                <template v-if="chooseDirectory" #append>
+                  <el-button :disabled="choosingDirectory" @click="pickDirectory('download')">选择文件夹</el-button>
+                </template>
+              </el-input>
+              <el-button
+                v-if="chooseDirectory && downloadSettings.directory"
+                :disabled="choosingDirectory"
+                text
+                @click="updateDownloadDirectory('')"
+              >恢复默认</el-button>
             </el-form-item>
             <el-form-item label="下载音质">
               <el-select v-model="downloadSettings.quality" @change="saveDownloadSetting('quality')">
@@ -315,6 +365,28 @@ const musicDirectoryPlaceholder = isDesktop
                   <p>使用已保存的目录和音质，跳过本地已有的歌曲。</p>
                 </div>
                 <el-switch v-model="downloadSettings.autoDownloadFavorites" @change="saveDownloadSetting('autoDownloadFavorites')" aria-label="收藏时自动下载" />
+              </div>
+              <div class="setting-row">
+                <div>
+                  <strong>完播下载</strong>
+                  <p>在线歌曲实际播放达到设定比例后自动下载，拖动进度条跳过的部分不计入。</p>
+                </div>
+                <el-switch v-model="downloadSettings.autoDownloadPlayback" @change="saveDownloadSetting('autoDownloadPlayback')" aria-label="完播下载" />
+              </div>
+              <div v-if="downloadSettings.autoDownloadPlayback" class="setting-row">
+                <div>
+                  <strong>播放比例</strong>
+                  <p>设为 100% 时，需要播放完整首歌曲才会下载。</p>
+                </div>
+                <el-input-number
+                  v-model="downloadSettings.playbackDownloadPercent"
+                  :min="1"
+                  :max="100"
+                  :precision="0"
+                  :value-on-clear="90"
+                  aria-label="触发完播下载的播放比例（百分比）"
+                  @change="saveDownloadSetting('playbackDownloadPercent')"
+                />
               </div>
             </div>
           </el-form>

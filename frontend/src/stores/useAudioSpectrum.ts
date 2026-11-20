@@ -58,7 +58,7 @@ export function useAudioSpectrum(
       const count = Math.max(1, Math.min(96, Math.floor(width / 5)));
       const glow: CanvasGradient[] = [];
       for (let i = 0; i < count; i++) {
-        const hue = 152 + 124 * i / Math.max(1, count - 1);
+        const hue = 152 + (198 - 152) * i / Math.max(1, count - 1);
         const color = `hsl(${hue} 90% 75%)`;
         const gradient = painter.createLinearGradient(0, height, 0, 0);
         gradient.addColorStop(0, `hsl(${hue} 66% 34% / 0.52)`);

@@ -1,5 +1,7 @@
 package app.shiyin.music;
 
+import android.net.ConnectivityManager;
+import android.net.NetworkCapabilities;
 import android.net.Uri;
 import android.security.NetworkSecurityPolicy;
 import android.util.Base64;
@@ -113,6 +115,16 @@ public final class ShiyinNetwork extends Plugin {
             request = next.build();
         }
         throw new IOException("重定向次数过多");
+    }
+
+    @PluginMethod
+    public void connectionStatus(PluginCall call) {
+        ConnectivityManager manager = getContext().getSystemService(ConnectivityManager.class);
+        NetworkCapabilities capabilities = manager.getNetworkCapabilities(manager.getActiveNetwork());
+        JSObject result = new JSObject();
+        result.put("connected", capabilities != null
+            && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET));
+        call.resolve(result);
     }
 
     @PluginMethod

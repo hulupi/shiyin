@@ -46,7 +46,20 @@ for (const [key, value] of Object.entries(lock.packages)) {
 await fs.writeFile(path.join(runtime, 'package.json'), JSON.stringify({ name, version, private: true, type: 'module', dependencies }));
 await fs.writeFile(path.join(runtime, 'package-lock.json'), JSON.stringify(lock));
 await fs.copyFile(path.join(root, 'desktop', 'launch.cjs'), path.join(runtime, 'launch.cjs'));
-await fs.copyFile(path.join(root, 'fpk', 'ICON_256.PNG'), path.join(runtime, 'tray.png'));
+const appIcon = path.join(root, 'fpk', 'ICON_256.PNG');
+await fs.copyFile(appIcon, path.join(runtime, 'tray.png'));
+if (process.platform === 'darwin') {
+  const desktop = path.dirname(runtime);
+  const icon = path.join(desktop, 'icon-mac.png');
+  const result = spawnSync('sips', [
+    '-z', '432', '432', '-p', '512', '512', appIcon, '--out', icon,
+  ], { stdio: 'inherit' });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error('Failed to prepare macOS application icon');
+  for (const name of ['trayTemplate.png', 'trayTemplate@2x.png']) {
+    await fs.copyFile(path.join(root, 'desktop', name), path.join(runtime, name));
+  }
+}
 await emit('backend/src');
 npm(['install', '--package-lock-only', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], runtime);
 npm(['ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], runtime);

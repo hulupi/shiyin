@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { state, publicTrack } from '../../db/store.js';
 import { loadPlaylists, savePlaylists } from '../../db/database.js';
 import { getOnlineTrack, saveOnlineTrack, publicOnlineTrack } from '../catalog/service.js';
+import { collectDiscoverTracks } from '../catalog/discover.js';
 
 interface Playlist {id:string;name:string;createdAt:string;trackIds:string[]}
 const playlists:Playlist[]=loadPlaylists<Playlist>();
@@ -18,6 +19,41 @@ playlistRouter.post('/playlists',async(req,res)=>{
   const name=typeof req.body.name==='string'?req.body.name.trim():'';if(!name||name.length>80)return res.status(400).json({error:'歌单名称需要为 1–80 字'});
   if(playlists.length>=100)return res.status(400).json({error:'最多支持 100 个歌单'});
   const entry={id:randomUUID(),name,createdAt:new Date().toISOString(),trackIds:[]};playlists.push(entry);await save();res.status(201).json(entry);
+});
+playlistRouter.post('/playlists/import', async (req, res) => {
+  const { name: rawName, source, trackIds } = req.body ?? {};
+  const name = typeof rawName === 'string' ? rawName.trim() : '';
+  if (!name) return res.status(400).json({ error: '歌单名称不能为空' });
+  let ids: string[];
+  let online;
+  if (source) {
+    online = await collectDiscoverTracks(source.platform, source.id);
+    ids = online.map(track => track.id);
+  } else {
+    if (!Array.isArray(trackIds) || trackIds.length > 10000 || trackIds.some(id => typeof id !== 'string'))
+      return res.status(400).json({ error: '请选择 1–10000 首歌曲' });
+    ids = [...new Set<string>(trackIds)];
+    const localIds = new Set(state.tracks.map(track => track.id));
+    online = ids.filter(id => !localIds.has(id)).map(getOnlineTrack);
+  }
+  if (!ids.length) return res.status(400).json({ error: '歌单没有可导入的歌曲' });
+  if (playlists.length >= 100) return res.status(400).json({ error: '最多支持 100 个歌单' });
+  for (const track of online) await saveOnlineTrack(track);
+  if (playlists.length >= 100) return res.status(400).json({ error: '最多支持 100 个歌单' });
+  const entry = { id: randomUUID(), name, createdAt: new Date().toISOString(), trackIds: ids };
+  savePlaylists([...playlists, entry]);
+  playlists.push(entry);
+  res.status(201).json(entry);
+});
+playlistRouter.patch('/playlists/:id', (req, res) => {
+  const entry = playlists.find(item => item.id === req.params.id);
+  if (!entry) return res.status(404).json({ error: '歌单不存在' });
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  if (!name || name.length > 80) return res.status(400).json({ error: '歌单名称需要为 1–80 字' });
+  const updated = { ...entry, name };
+  savePlaylists(playlists.map(item => item === entry ? updated : item));
+  entry.name = name;
+  res.json(updated);
 });
 playlistRouter.get('/playlists/:id',(req,res)=>{const entry=playlists.find(item=>item.id===req.params.id);if(!entry)return res.status(404).json({error:'歌单不存在'});res.json({...entry,tracks:entry.trackIds.map(publicSong).filter(Boolean)});});
 playlistRouter.post('/playlists/:id/tracks',async(req,res)=>{

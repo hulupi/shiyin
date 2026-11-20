@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Pencil } from "lucide-vue-next";
 import type { Track } from "../../../backend/src/contracts";
 import PlaylistCover from "./PlaylistCover.vue";
 import AppIcon from "./AppIcon.vue";
@@ -8,7 +9,7 @@ defineProps<{
   firstTrack?: Track;
   loading?: boolean;
 }>();
-const emit = defineEmits<{ open: []; play: []; remove: [] }>();
+const emit = defineEmits<{ open: []; play: []; rename: []; remove: [] }>();
 </script>
 <template>
   <article class="playlist-card">
@@ -30,6 +31,14 @@ const emit = defineEmits<{ open: []; play: []; remove: [] }>();
       circle
       @click="emit('play')"
       ><AppIcon v-if="!loading" name="play" :size="17" fill="currentColor"
+    /></el-button>
+    <el-button
+      class="card-rename"
+      :aria-label="'重命名歌单 ' + name"
+      title="重命名歌单"
+      circle
+      @click="emit('rename')"
+      ><Pencil :size="15"
     /></el-button>
     <el-button
       class="card-delete"
@@ -95,7 +104,8 @@ const emit = defineEmits<{ open: []; play: []; remove: [] }>();
     transform 0.18s;
   box-shadow: 0 4px 16px #0003;
 }
-.card-delete.el-button {
+.card-delete.el-button,
+.card-rename.el-button {
   position: absolute;
   top: 10px;
   right: 10px;
@@ -109,9 +119,13 @@ const emit = defineEmits<{ open: []; play: []; remove: [] }>();
   transition: opacity 0.18s;
   backdrop-filter: blur(8px);
 }
+.card-rename.el-button {
+  right: 46px;
+}
 .playlist-card:hover,
 .playlist-card:focus-within {
   .card-play,
+  .card-rename,
   .card-delete {
     opacity: 1;
     transform: translateY(0);
@@ -128,6 +142,7 @@ const emit = defineEmits<{ open: []; play: []; remove: [] }>();
 }
 @media (hover: none) {
   .card-play.el-button,
+  .card-rename.el-button,
   .card-delete.el-button {
     opacity: 1;
     transform: none;

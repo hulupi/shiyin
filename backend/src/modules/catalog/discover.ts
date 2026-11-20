@@ -149,8 +149,8 @@ export async function discoverPlaylists(platform:string,page=1,refresh=false,sor
     return {charts,hasMore:hasMore&&charts.length>0,page};
   });
 }
-export async function discoverTracks(platform:string,id:string,page=1,refresh=false){
-  const result=await cached(`discover:detail:${platform}:${id}:${page}`,refresh,async()=>{
+async function discoverTrackPage(platform:string,id:string,page:number,refresh=false){
+  return cached(`discover:detail:${platform}:${id}:${page}`,refresh,async()=>{
     let raw:any[]=[],total=0,pageSize=50;
     if(platform==='wy'){
       const data=await cached('discover:wy:'+id,refresh,()=>json(`https://music.163.com/api/v6/playlist/detail?id=${id}&n=1000&s=0`));
@@ -178,7 +178,24 @@ export async function discoverTracks(platform:string,id:string,page=1,refresh=fa
     }
     const tracks=raw.map(item=>convertCatalogTrack(platform,item));return {tracks,total,page,hasMore:raw.length>0&&page*pageSize<total};
   });
+}
+export async function discoverTracks(platform:string,id:string,page=1,refresh=false){
+  const result = await discoverTrackPage(platform, id, page, refresh);
   cacheCatalogTracks(result.tracks);return {...result,tracks:result.tracks.map(publicOnlineTrack)};
+}
+export async function collectDiscoverTracks(platform: unknown, id: unknown) {
+  if (typeof platform !== 'string' || !['wy', 'tx', 'kw', 'kg', 'mg'].includes(platform)
+      || typeof id !== 'string' || !/^\d{1,16}$/.test(id)) {
+    throw new Error('无效的歌单来源');
+  }
+  const tracks = new Map<string, OnlineTrack>();
+  for (let page = 1; page <= 500; page++) {
+    const result = await discoverTrackPage(platform, id, page);
+    if (result.total > 10000) throw new Error('歌单最多支持 10000 首歌曲');
+    for (const track of result.tracks) tracks.set(track.id, track);
+    if (!result.hasMore) return [...tracks.values()];
+  }
+  throw new Error('无法读取完整歌单');
 }
 // Some Kuwo endpoints return quoted strings using single quotes. Parse data only.
 export function parseKuwoSearch(input:string){

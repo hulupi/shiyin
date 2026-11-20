@@ -4,6 +4,7 @@ import { Buffer } from 'buffer';
 const legacyCatalogHosts = new Set(["c.y.qq.com","kbangserver.kuwo.cn","nmobi.kuwo.cn","nplserver.kuwo.cn","qukudata.kuwo.cn","search.kuwo.cn","songsearch.kugou.com","wapi.kuwo.cn"]);
 
 const bridge = registerPlugin<{
+  connectionStatus(): Promise<{ connected: boolean }>;
   request(options: {
     url: string; method: string; headers: Record<string, string>;
     body?: string; limit: number; timeout?: number;
@@ -31,4 +32,11 @@ export async function requestPublic(url: string, options: {
 
 export async function prepareAudio(url: string) {
   return (await bridge.audio({ url })).path;
+}
+
+export async function requireAndroidConnection(signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  const status = await bridge.connectionStatus().catch(() => ({ connected: navigator.onLine }));
+  signal?.throwIfAborted();
+  if (!status.connected) throw new Error('手机未连接网络，请检查 Wi-Fi 或移动数据后重试');
 }
