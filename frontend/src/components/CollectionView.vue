@@ -215,7 +215,7 @@ watch(
   padding: 40px 20px;
   border: 1px dashed var(--day-line, #2a3a2e);
   border-radius: 12px;
-  background: radial-gradient(ellipse at center, var(--day-surface-soft, #19281e70), transparent 70%);
+  background: transparent;
 }
 
 .empty-icon {

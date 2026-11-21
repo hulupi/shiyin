@@ -78,7 +78,7 @@ onUnmounted(() => observer?.disconnect());
   border-radius: 6px;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, #2b4232, #19231c);
+  background: #24342a;
   color: #6c997b;
   flex-shrink: 0;
   overflow: hidden;

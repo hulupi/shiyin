@@ -615,7 +615,7 @@ onUnmounted(() => {
   border-radius: 6px;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, var(--day-selected, #2b4232), var(--day-surface-soft, #19231c));
+  background: var(--day-selected, #2b4232);
   color: var(--day-muted, #6c997b);
   flex-shrink: 0;
   overflow: hidden;

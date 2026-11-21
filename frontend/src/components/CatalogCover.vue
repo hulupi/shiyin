@@ -8,17 +8,13 @@ watch(() => [props.name, props.image], () => {
   failed.value = false;
 });
 
-const gradient = computed(() => {
+const coverColor = computed(() => {
   // FNV-1a keeps the palette independent of platform, list order and refreshes.
   let hash = 2166136261;
   for (const character of props.name.normalize("NFC").trim()) {
     hash = Math.imul(hash ^ character.codePointAt(0)!, 16777619);
   }
-  const palette = hash >>> 0;
-  const hue = palette % 360;
-  const endHue = (hue + 26 + ((palette >>> 9) % 49)) % 360;
-  const angle = 125 + ((palette >>> 16) % 61);
-  return `linear-gradient(${angle}deg, hsl(${hue} 70% 33%), hsl(${endHue} 66% 41%))`;
+  return `hsl(${(hash >>> 0) % 360} 64% 35%)`;
 });
 </script>
 
@@ -32,7 +28,7 @@ const gradient = computed(() => {
       referrerpolicy="no-referrer"
       @error="failed = true"
     />
-    <span v-else class="generated-cover" :style="{ backgroundImage: gradient }">
+    <span v-else class="generated-cover" :style="{ backgroundColor: coverColor }">
       <span class="cover-name" :class="{ compact: compactTitle }">{{ name }}</span>
     </span>
   </span>

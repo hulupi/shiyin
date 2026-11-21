@@ -1107,7 +1107,7 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   border-radius: 6px;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, var(--day-selected, #2b4232), var(--day-surface-soft, #19231c));
+  background: var(--day-selected, #2b4232);
   color: var(--day-muted, #6c997b);
   flex-shrink: 0;
   overflow: hidden;
@@ -1307,7 +1307,7 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   position: fixed;
   inset: 0 0 108px 224px;
   z-index: 25;
-  background: radial-gradient(ellipse at 20% 40%, var(--day-selected, #244330), var(--day-surface-soft, #111a14) 70%);
+  background: var(--day-surface-soft, #111a14);
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 50px;
@@ -1818,11 +1818,6 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   }
 }
 .app-shell > .player {
-  left: calc(var(--sidebar-width) + 40px);
-  right: 32px;
-  bottom: var(--desktop-player-bottom);
-  width: min(900px, calc(100% - var(--sidebar-width) - 80px));
-  margin-inline: auto;
   height: 76px;
   padding: 0 20px;
   gap: 18px;
@@ -1899,8 +1894,8 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   flex: none;
   padding: 0 5px;
   border-radius: 4px;
-  color: var(--day-muted, #66cf78);
-  background: var(--day-selected, #1d3d25);
+  color: var(--quality-badge-text);
+  background: var(--quality-badge-surface);
   font-size: 10px;
   line-height: 15px;
   white-space: nowrap;
@@ -2067,7 +2062,7 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   display: flex;
   justify-content: center;
   padding: 56px 32px 24px;
-  background: radial-gradient(ellipse at 25% 35%, var(--day-selected, #244330), var(--day-surface-soft, #101a14) 75%);
+  background: var(--day-surface-soft, #101a14);
 }
 .lyrics-workspace {
   width: min(1100px, 100%);
@@ -2144,12 +2139,10 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   pointer-events: none;
 }
 :global(html.android .lyrics-dialog.el-dialog) {
-  background: linear-gradient(to bottom, var(--android-header-background), var(--android-lyrics-edge), var(--android-player-background));
+  background: var(--android-header-background);
 }
 :global(html.android .lyrics-dialog .lyrics-overlay) {
-  background:
-    linear-gradient(to bottom, var(--android-header-background), transparent 12%, transparent 88%, var(--android-player-background)),
-    radial-gradient(ellipse at 25% 35%, var(--day-selected, #244330), var(--android-lyrics-edge) 75%);
+  background: var(--android-lyrics-edge);
 }
 :global(.lyrics-dialog .close-lyrics) {
   position: absolute;
@@ -2333,12 +2326,19 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   background: var(--day-accent-text, #f6f7f9);
 }
 
+@media (min-width: 701px) {
+  .app-shell > .player {
+    inset: auto 0 var(--desktop-player-bottom) var(--sidebar-width);
+    width: min(900px, calc(100% - var(--sidebar-width) - 80px));
+    margin-inline: auto;
+    border-radius: 45px;
+  }
+}
+
 @media (max-width: 700px) {
   .app-shell > .player {
-    left: 0;
-    right: 0;
+    inset: auto 0 max(0px, env(safe-area-inset-bottom, 0px));
     border-radius: 0;
-    bottom: max(0px, env(safe-area-inset-bottom, 0px));
     width: auto;
     margin: 0;
   }

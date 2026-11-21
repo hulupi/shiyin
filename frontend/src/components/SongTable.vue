@@ -598,8 +598,8 @@ function clock(seconds: number) {
 }
 
 .quality-badge {
-  color: var(--day-muted, #66cf78);
-  background: var(--day-selected, #1d3d25);
+  color: var(--quality-badge-text);
+  background: var(--quality-badge-surface);
   padding: 2px 5px;
   border-radius: 3px;
   font-size: 12px;
@@ -741,6 +741,7 @@ function clock(seconds: number) {
 }
 
 .song-table-rows {
+  padding-bottom: var(--list-bottom-padding, 0px);
   flex: 1;
   min-height: 0;
   overflow-y: auto;

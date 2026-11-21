@@ -7,18 +7,24 @@
 :global(:root) {
   font-family: Inter, "Microsoft YaHei", system-ui, sans-serif;
   color: #e9edea;
-  background: #101311;
+  background: #212924;
   font-synthesis: none;
   font-size: 14px;
   color-scheme: dark;
   --green: #44d17a;
-  --border: #252f28;
+  --border: #3a4840;
+  --sidebar-surface: #252e28;
+  --quality-badge-text: #78da88;
+  --quality-badge-surface: #25462e;
 }
 
 :global(html.light) {
   color-scheme: light;
   color: #203329;
-  background: #f5f8f5;
+  background: #f3f6f2;
+  --sidebar-surface: #f9fbf8;
+  --quality-badge-text: #216e46;
+  --quality-badge-surface: #dcefe1;
   --green: #23814e;
   --border: #d6e2d8;
   --muted: #53685b;
@@ -44,7 +50,7 @@
   --el-color-primary-light-9: #e9f5ec;
   --el-color-primary-dark-2: #176a3d;
   --el-bg-color: #fff;
-  --el-bg-color-page: #f5f8f5;
+  --el-bg-color-page: #f3f6f2;
   --el-bg-color-overlay: #fff;
   --el-fill-color-blank: #fff;
   --el-fill-color-light: #eff5ef;
@@ -209,6 +215,14 @@
   }
 }
 :global(html.dark) {
+  --day-text: #edf2ee;
+  --day-muted: #aebdb3;
+  --day-accent-text: #8ce4ac;
+  --day-surface: #2a352e;
+  --day-surface-soft: #303d34;
+  --day-selected: #384b40;
+  --day-line: #425248;
+  --day-scrollbar: #556b5d;
   --el-color-primary: #44d17a;
   --el-color-primary-light-3: #65dd92;
   --el-color-primary-light-5: #3b7950;
@@ -216,10 +230,10 @@
   --el-color-primary-light-8: #213e2a;
   --el-color-primary-light-9: #1a3021;
   --el-color-primary-dark-2: #37b868;
-  --el-bg-color: #151e18;
-  --el-bg-color-page: #101311;
-  --el-bg-color-overlay: #1a241d;
-  --el-fill-color-blank: #151e18;
+  --el-bg-color: #2a352e;
+  --el-bg-color-page: #212924;
+  --el-bg-color-overlay: #303d34;
+  --el-fill-color-blank: #2a352e;
   --el-text-color-primary: #e9edea;
   --el-text-color-regular: #b2c1b7;
   --el-text-color-secondary: #81988a;
@@ -322,7 +336,7 @@
 :global(:root) {
   --player-height: 136px;
   --desktop-player-bar-height: 90px;
-  --desktop-player-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  --desktop-player-bottom: max(24px, env(safe-area-inset-bottom, 0px));
 }
 
 @media (max-width: 700px) {

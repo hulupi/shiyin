@@ -148,61 +148,18 @@ onUnmounted(() => {
 </template>
 
 <style scoped lang="scss">
-main {
-  margin-left: 224px;
-  padding-bottom: 125px;
-  min-height: 100vh;
-}
-
-@media (max-width: 1100px) {
-  main {
-    margin-left: 190px;
-  }
-}
-
-@media (max-width: 700px) {
-  main {
-    margin-left: 62px;
-    padding-bottom: 110px;
-  }
-}
-
-main {
-  padding-bottom: 149px;
-}
-
-@media (max-width: 700px) {
-  main {
-    padding-bottom: 134px;
-  }
-}
-
-.app-shell {
-  height: 100dvh;
-  overflow: hidden;
-}
-
-.app-shell > main {
-  height: calc(100dvh - var(--player-height));
-  min-height: 0;
-  padding-bottom: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
 .app-shell {
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   height: 100dvh;
-  padding-bottom: var(--player-height);
   overflow: hidden;
+  background: var(--el-bg-color-page);
 }
 
 .app-shell > main {
+  position: relative;
   margin: 0;
-  padding: 0;
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -219,31 +176,6 @@ main {
   padding: 24px;
   color: var(--day-muted, #8eaa98);
 }
-.app-shell {
-  padding: 8px;
-  gap: 0;
-  background: radial-gradient(
-    ellipse at 35% 0%,
-    var(--day-selected, #264333) 0%,
-    var(--day-surface-soft, #151e19) 40%,
-    var(--el-bg-color-page, #101311) 75%
-  );
-}
-@media (max-width: 700px) {
-  .app-shell {
-    padding: 5px;
-  }
-}
-.app-shell:has(.local-content, .floating-content) {
-  padding-right: 0;
-}
-.app-shell:has(.charts-page, .home-page) {
-  padding-right: 0;
-}
-.app-shell > main {
-  position: relative;
-}
-
 .mobile-header {
   display: flex;
   align-items: center;
@@ -271,10 +203,7 @@ main {
 .menu-toggle:focus-visible { outline: 2px solid var(--green); }
 :global(.mobile-navigation-drawer .el-drawer__body) { padding: 0; }
 @media (max-width: 700px) {
-  .app-shell,
-  .app-shell:has(.local-content, .floating-content),
-  .app-shell:has(.charts-page, .home-page) {
-    padding: 0;
+  .app-shell {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: 53px minmax(0, 1fr);
   }
@@ -284,7 +213,11 @@ main {
 }
 @media (min-width: 701px) {
   .app-shell > main {
-    padding-bottom: calc(var(--desktop-player-bar-height) + var(--desktop-player-bottom));
+    --player-scroll-clearance: calc(var(--desktop-player-bar-height) + var(--desktop-player-bottom));
+  }
+
+  .app-shell > main:not(:has(.song-table, .chart-directory, .playlist-directory, .online-search, .downloads-page, .playlists-page)) {
+    padding-bottom: var(--player-scroll-clearance);
   }
 }
 </style>

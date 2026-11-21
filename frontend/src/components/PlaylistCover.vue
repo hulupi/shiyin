@@ -44,7 +44,7 @@ watch(
   overflow: hidden;
   isolation: isolate;
   border-radius: 9px;
-  background: linear-gradient(135deg, #345442, #17291e);
+  background: #294333;
   display: grid;
   place-items: center;
   img {
@@ -57,7 +57,7 @@ watch(
   color: #8cb69a;
 }
 .animated-cover {
-  background: linear-gradient(120deg, #182d23, #294333);
+  background: #23382c;
 }
 .color-wave {
   position: absolute;
@@ -71,13 +71,13 @@ watch(
 .wave-one {
   left: -60%;
   top: 35%;
-  background: linear-gradient(150deg, #526b48 15%, #365742 55%, #244534);
+  background: #365742;
   animation: forest-drift 13s ease-in-out infinite alternate;
 }
 .wave-two {
   left: 22%;
   top: 12%;
-  background: linear-gradient(155deg, #314f3b 15%, #2c4739 55%, #1c352b);
+  background: #2c4739;
   animation: mist-drift 16s ease-in-out infinite alternate;
 }
 .cover-heart {
