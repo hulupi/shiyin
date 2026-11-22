@@ -61,7 +61,10 @@ async function start() {
     minWidth: 1000,
     minHeight: 600,
     backgroundColor: '#101311',
-    frame: isMac,
+    ...(isMac ? {
+      titleBarStyle: 'hidden',
+      trafficLightPosition: { x: 10, y: 6 },
+    } : { frame: false }),
     autoHideMenuBar: true,
     webPreferences: {
       sandbox: true,
@@ -120,7 +123,20 @@ async function start() {
     event.preventDefault();
     player.hide();
   });
-  if (!isMac) {
+  if (isMac) {
+    contents.on('dom-ready', () => {
+      void contents.insertCSS(`
+        .app-shell::before {
+          content: "";
+          position: fixed;
+          inset: 0 0 auto 84px;
+          height: 22px;
+          z-index: 20;
+          -webkit-app-region: drag;
+        }
+      `);
+    });
+  } else {
     const titleBarCss = readFileSync(path.join(__dirname, 'title-bar.css'), 'utf8');
     contents.on('dom-ready', () => { void contents.insertCSS(titleBarCss, { cssOrigin: 'user' }); });
     ipcMain.on('desktop:window-action', (event, action) => {
