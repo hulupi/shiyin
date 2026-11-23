@@ -27,7 +27,7 @@ export async function enrichAudio(
   else if(original?.common.picture?.[0]){const picture=original.common.picture[0];assets.cover={bytes:Buffer.from(picture.data),type:picture.format};}
   else assets.warnings.push('未获取到封面');
   if (!embedMetadata) return assets;
-  if(!['mp3','flac'].includes(extension)){assets.warnings.push(`${extension.toUpperCase()} 暂不支持内嵌歌词和封面`);return assets;}
+  if(!['mp3','flac'].includes(extension)){assets.warnings.push(`${extension.toUpperCase()} 暂不支持内嵌歌词和封面，将按设置保存为独立文件`);return assets;}
   const output=path.join(path.dirname(file),`.shiyin-tags-${randomUUID()}.part`);
   try{
     await embedTags(file,output,extension,track,assets.lyrics,assets.cover,signal);signal.throwIfAborted();

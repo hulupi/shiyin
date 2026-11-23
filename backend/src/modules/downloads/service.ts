@@ -12,6 +12,7 @@ import { getOnlineTrack, saveOnlineTrack, publicOnlineTrack, type OnlineTrack } 
 import { resolveOnlineAudio, bindOnlineLocal, hasLocalCopy, matchesLocalTrack } from '../playback/online.js';
 import { openPublicUrl } from '../sources/network.js';
 import { enrichAudio, saveSidecars } from './enrich.js';
+import { validateDownload } from './validate.js';
 import { recordActivityException, sourceActivity } from '../sources/activity.js';
 
 const filenameFormats = ['artist-title', 'title-artist'] as const;
@@ -72,14 +73,20 @@ async function run(task:DownloadTask,signal:AbortSignal) {
     await save();
     const rejectedSourcesByQuality=new Map<string,Set<string>>();
     let quality=task.quality,attempts=0,completed=false;
+    let lastDownloadError='';
     // A different source always starts a fresh temporary file, never appends.
     while(!completed) {
       signal.throwIfAborted();
-      const result=await resolveOnlineAudio(track,quality,[],signal,rejectedSourcesByQuality,activity);quality=result.quality;
+      const result=await resolveOnlineAudio(track,quality,[],signal,rejectedSourcesByQuality,activity).catch(error=>{
+        signal.throwIfAborted();
+        if(lastDownloadError)throw new Error(`下载失败：${lastDownloadError}；${error instanceof Error?error.message:'其他音源不可用'}`);
+        throw error;
+      });quality=result.quality;
       temporary=path.join(root,`.shiyin-${task.id}.part`);
       try {
+        activity.record('download',{source:result.sourceName,quality:result.quality,downloadUrl:result.url});
         const response=await openPublicUrl(result.url,{signal});
-        if(response.statusCode!==200||/text\/|json|xml/i.test(response.headers['content-type']||'')){response.destroy();throw new Error('下载地址不是可用的音频文件');}
+        if(response.statusCode!==200||/text\/|json|xml/i.test(response.headers['content-type']||'')){response.destroy();throw new Error(`下载地址不是可用的音频文件（HTTP ${response.statusCode}，${response.headers['content-type']||'未知类型'}）`);}
         const total=Number(response.headers['content-length'])||0;
         if(total>10*1024**3||total>disk.bavail*disk.bsize){response.destroy();throw new Error('文件过大或磁盘空间不足');}
         const chunks=response[Symbol.asyncIterator]();
@@ -119,7 +126,8 @@ async function run(task:DownloadTask,signal:AbortSignal) {
         } finally {
           response.destroy();
         }
-        const metadata=await parseFile(temporary,{skipCovers:true});
+        const metadata=await parseFile(temporary,{duration:true});
+        validateDownload(metadata,track.duration);
         const container=(metadata.format.container||'').toLowerCase();
         const extension=container.includes('flac')?'flac':container.includes('mpeg-4')||container.includes('mp4')?'m4a':container.includes('wave')?'wav':container.includes('ogg')?'ogg':container.includes('adts')?'aac':container.includes('mpeg')?'mp3':null;
         if(!extension)throw new Error('无法识别下载文件的音频格式');
@@ -147,7 +155,7 @@ async function run(task:DownloadTask,signal:AbortSignal) {
         if(!destination)throw new Error('同名文件过多，请整理下载目录');
         await unlink(temporary);temporary='';task.path=destination;task.format=extension.toUpperCase();const finished=await stat(destination);task.bytes=finished.size;task.total=finished.size;
         Object.assign(task,await saveSidecars(destination,assets,task.saveLyrics,task.embedMetadata !== false));
-        const indexed=await indexDownloadedFile(destination,task.directoryId);await bindOnlineLocal(track,indexed.id);
+        const indexed=await indexDownloadedFile(destination,task.directoryId,{track,onWarning:message=>assets.warnings.push(message)});await bindOnlineLocal(track,indexed.id);
         task.status='completed';completed=true;await save();
         activity.record('completed', {
           source: result.sourceName, quality: result.quality, format: task.format,
@@ -156,7 +164,8 @@ async function run(task:DownloadTask,signal:AbortSignal) {
       }catch(error){
         if(temporary)await unlink(temporary).catch(()=>{});temporary='';signal.throwIfAborted();
         if(task.status==='tagging'||task.path||['ENOSPC','EACCES','EROFS','EIO'].includes((error as NodeJS.ErrnoException).code||''))throw error;
-        activity.record('source-failed', { source: result.sourceName, quality: result.quality, reason: 'transfer' });
+        lastDownloadError=error instanceof Error?error.message.slice(0,1000):'下载或文件校验失败';
+        activity.record('source-failed', { source: result.sourceName, quality: result.quality, reason: 'transfer', message:error instanceof Error?error.message.slice(0,1000):'下载或文件校验失败' });
         const rejected=rejectedSourcesByQuality.get(result.quality)??new Set<string>();
         rejected.add(result.sourceId);
         rejectedSourcesByQuality.set(result.quality,rejected);
@@ -165,7 +174,7 @@ async function run(task:DownloadTask,signal:AbortSignal) {
         await save();
       }
     }
-  }catch(error){task.status=signal.aborted?'cancelled':'failed';task.error=signal.aborted?'下载已取消':error instanceof Error?error.message:'下载失败';activity.record(task.status,{quality:task.actualQuality,format:task.format});await save();}
+  }catch(error){task.status=signal.aborted?'cancelled':'failed';task.error=signal.aborted?'下载已取消':error instanceof Error?error.message:'下载失败';activity.record(task.status,{quality:task.actualQuality,format:task.format,message:task.error});await save();}
   finally{if(temporary)await unlink(temporary).catch(()=>{});}
 }
 export function cancelDirectoryDownloads(directoryId:string){for(const task of tasks)if(task.directoryId===directoryId){running.get(task.id)?.abort();if(task.status==='queued')task.status='cancelled';}void save().catch(()=>{});}
@@ -302,7 +311,7 @@ downloadRouter.post('/downloads/:id/enrich',async(req,res)=>{
   const wait=req.query.wait==='1';
   if(!wait)res.status(202).json(task);
   const work=(async()=>{
-    try{const assets=await enrichAudio(file,path.extname(file).slice(1).toLowerCase(),track,controller.signal);await directoryPath(task.directoryId);controller.signal.throwIfAborted();const sidecars=await saveSidecars(file,assets,true,true);task.lyricPath=sidecars.lyricPath??task.lyricPath;task.coverPath=sidecars.coverPath??task.coverPath;task.warnings=assets.warnings;task.embeddedLyrics=assets.embeddedLyrics;task.embeddedCover=assets.embeddedCover;const info=await stat(file);task.bytes=info.size;task.total=info.size;const indexed=await indexDownloadedFile(file,task.directoryId);await bindOnlineLocal(track,indexed.id);}
+    try{const assets=await enrichAudio(file,path.extname(file).slice(1).toLowerCase(),track,controller.signal);await directoryPath(task.directoryId);controller.signal.throwIfAborted();const sidecars=await saveSidecars(file,assets,true,true);task.lyricPath=sidecars.lyricPath??task.lyricPath;task.coverPath=sidecars.coverPath??task.coverPath;task.warnings=assets.warnings;task.embeddedLyrics=assets.embeddedLyrics;task.embeddedCover=assets.embeddedCover;const info=await stat(file);task.bytes=info.size;task.total=info.size;const indexed=await indexDownloadedFile(file,task.directoryId,{track,onWarning:message=>assets.warnings.push(message)});await bindOnlineLocal(track,indexed.id);}
     catch(error){task.warnings=[controller.signal.aborted?'补全已取消，原有音频保留':error instanceof Error?error.message:'歌词封面补全失败'];}
     finally{task.status='completed';await save().catch(()=>{});running.delete(task.id);pump();}
   })();

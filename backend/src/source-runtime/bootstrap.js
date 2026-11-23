@@ -50,7 +50,7 @@
   globalThis.__deliver = (id,result) => { const callback=callbacks.get(id);callbacks.delete(id);if(callback)callback(result.error?new Error(result.error):null,result.response,result.response?.body); };
   globalThis.__dispatch = request => {
     Promise.resolve().then(()=>{if(!requestHandler)throw new Error('未注册音源请求处理器');return requestHandler(request);})
-      .then(value=>__emit(JSON.stringify({kind:'result',value})),()=>__emit(JSON.stringify({kind:'error',error:'音源未能解析该歌曲'})));
+      .then(value=>__emit(JSON.stringify({kind:'result',value})),error=>__emit(JSON.stringify({kind:'error',error:String(error?.message || error || '音源未能解析该歌曲').slice(0,1000)})));
   };
   function request(url,options={},callback) {
     if(typeof options==='function'){callback=options;options={};}
@@ -62,8 +62,8 @@
   }
   const EVENT_NAMES=Object.freeze({inited:'inited',request:'request',updateAlert:'updateAlert'});
   globalThis.lx = {
-    version:'1.2.0',env:globalThis.__sourceEnvironment || 'desktop',currentScriptInfo:__scriptInfo,EVENT_NAMES,request,
-    on(event,handler){if(event===EVENT_NAMES.request && typeof handler==='function')requestHandler=handler;},
+    version:'2.0.0',env:globalThis.__sourceEnvironment || 'desktop',currentScriptInfo:__scriptInfo,EVENT_NAMES,request,
+    on(event,handler){if(event===EVENT_NAMES.request && typeof handler==='function')requestHandler=handler;return Promise.resolve();},
     send(event,data){if(event===EVENT_NAMES.inited)__emit(JSON.stringify({kind:'ready',data}));return Promise.resolve();},
     utils:{
       buffer:{from:Bytes.from,bufToString:(value,encoding)=>host('bufferString',[serialize(value),encoding])},

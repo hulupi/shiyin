@@ -49,10 +49,22 @@ export async function authorizedFile(track: StoredTrack, lyric:boolean|'cover' =
   return file;
 }
 export function cancelScan() { cancelled = true; }
-export async function indexDownloadedFile(file:string,directoryId:string) {
+interface DownloadIndexOptions {
+  track?: Pick<StoredTrack, 'title' | 'artist' | 'album' | 'duration'>;
+  onWarning?: (message: string) => void;
+}
+export async function indexDownloadedFile(file:string,directoryId:string,options:DownloadIndexOptions={}) {
   const directory=findStorageDirectory(directoryId);
   if(!directory||!within(directory.path,await realpath(file)))throw new Error('下载目录已取消授权');
-  const metadata=await parseFile(file),info=await stat(file);
+  // Retry optional artwork parsing only; never replace a parse failure with cached metadata.
+  // Keep filesystem and database errors outside this metadata-only fallback.
+  let metadata: Awaited<ReturnType<typeof parseFile>>;
+  try { metadata = await parseFile(file); }
+  catch {
+    metadata = await parseFile(file, { skipCovers: true });
+    options.onWarning?.('音频已保存，部分内嵌信息无法读取，已使用歌曲信息入库');
+  }
+  const info=await stat(file);
   const base=file.slice(0,-path.extname(file).length);
   const lyricPath=await access(base+'.lrc').then(()=>base+'.lrc').catch(()=>undefined);
   let coverPath:string|undefined;for(const extension of ['jpg','png','webp','gif','avif'])if(await access(base+'.'+extension).then(()=>true).catch(()=>false)){coverPath=base+'.'+extension;break;}
@@ -60,7 +72,7 @@ export async function indexDownloadedFile(file:string,directoryId:string) {
   const id = createHash('sha256').update(file).digest('hex').slice(0, 24);
   const previous = state.tracks.find(item => item.id === id);
   const addedAt = previous ? previous.addedAt : Date.now();
-  const track:StoredTrack={id,addedAt,directoryId,path:file,title:metadata.common.title||fallback.slice(fallback.length>1?1:0).join(' - '),artist:metadata.common.artist||(fallback.length>1?fallback[0]:'未知歌手'),album:metadata.common.album||'未知专辑',duration:metadata.format.duration||0,format:path.extname(file).slice(1).toUpperCase(),size:info.size,audioVariants:audioVariants(file,info.size,metadata),modified:info.mtimeMs,hasCover:Boolean(coverPath||metadata.common.picture?.length),hasEmbeddedCover:Boolean(metadata.common.picture?.length),coverPath,lyricPath,hasLyrics:Boolean(lyricPath||metadata.common.lyrics?.length),hasEmbeddedLyrics:Boolean(metadata.common.lyrics?.length),available:true};
+  const track:StoredTrack={id,addedAt,directoryId,path:file,title:metadata.common.title||options.track?.title||fallback.slice(fallback.length>1?1:0).join(' - '),artist:metadata.common.artist||options.track?.artist||(fallback.length>1?fallback[0]:'未知歌手'),album:metadata.common.album||options.track?.album||'未知专辑',duration:metadata.format.duration||options.track?.duration||0,format:path.extname(file).slice(1).toUpperCase(),size:info.size,audioVariants:audioVariants(file,info.size,metadata),modified:info.mtimeMs,hasCover:Boolean(coverPath||metadata.common.picture?.length),hasEmbeddedCover:Boolean(metadata.common.picture?.length),coverPath,lyricPath,hasLyrics:Boolean(lyricPath||metadata.common.lyrics?.length),hasEmbeddedLyrics:Boolean(metadata.common.lyrics?.length),available:true};
   state.tracks=state.tracks.filter(item=>item.id!==track.id);state.tracks.push(track);await save();return track;
 }
 export function startScan() {

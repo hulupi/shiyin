@@ -13,6 +13,8 @@ npm start
 npm run package:win
 ```
 
+`npm start` 会先更新桌面运行时（前端和后端），再启动 Electron。修改源码后，从托盘菜单彻底退出拾音，再重新运行；目前不支持热更新。仅关闭窗口会隐藏到托盘。
+
 Windows x64 试用安装包输出到 `desktop/dist/local/`。安装包未签名。
 
 ## macOS 打包

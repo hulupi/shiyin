@@ -8,6 +8,12 @@ import { qualityName } from "../services/music";
 const operationLabels = { playback: "播放", download: "下载", exception: "异常" };
 type Operation = keyof typeof operationLabels;
 const stageNames = {
+  plan: "音源顺序",
+  request: "发送请求",
+  response: "收到响应",
+  "audio-url": "音频地址",
+  download: "开始下载",
+  skipped: "跳过音源",
   attempt: "尝试音源",
   switch: "切换音源或音质",
   resolved: "已取得音频",
@@ -33,6 +39,12 @@ interface Activity {
   title: string;
   artist: string;
   requestedQuality: string;
+  requestUrl?: string;
+  audioUrl?: string;
+  downloadUrl?: string;
+  method?: string;
+  statusCode?: number;
+  sourcePosition?: number;
   message?: string;
   source?: string;
   quality?: string;
@@ -49,6 +61,8 @@ const entries = ref<Activity[]>([]);
 const groups = computed(() => {
   const operations = new Map<string, { latest: Activity; events: Activity[] }>();
   for (const event of entries.value) {
+    // Older logs may still contain separate HTTP response events.
+    if (event.stage === "response") continue;
     if (filter.value === "exception") {
       if (event.stage !== "failed" && event.stage !== "source-failed") continue;
     } else if (filter.value !== "all" && event.operation !== filter.value) continue;
@@ -126,6 +140,19 @@ function resultLabel(event: Activity) {
 function sourceLabel(source?: string, quality?: string) {
   return [source, quality ? qualityName(quality) : ""].filter(Boolean).join(" · ");
 }
+function urls(event: Activity) {
+  return [
+    { label: "请求地址", value: event.requestUrl },
+    { label: "音频地址", value: event.audioUrl },
+    { label: "下载地址", value: event.downloadUrl },
+  ].filter((item): item is { label: string; value: string } => !!item.value);
+}
+function httpUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.href : undefined;
+  } catch { return undefined; }
+}
 </script>
 
 <template>
@@ -154,16 +181,25 @@ function sourceLabel(source?: string, quality?: string) {
         <span v-if="latest.format && latest.format !== latest.quality">{{ latest.format }}</span>
         <span v-if="latest.bitrate">{{ latest.bitrate }} kbps</span>
       </div>
-      <details v-if="events.length > 1" class="activity-details">
+      <details v-if="events.length > 1 || urls(latest).length" class="activity-details">
         <summary>查看音源过程（{{ events.length }} 条）</summary>
         <p>请求音质 {{ qualityName(latest.requestedQuality) }}</p>
         <ol>
           <li v-for="entry in events" :key="entry.id">
             <strong>{{ stageNames[entry.stage] }}</strong>
+            <span v-if="entry.sourcePosition" class="source-position"> · 设置第 {{ entry.sourcePosition }} 位</span>
             <template v-if="entry.fromSource"> · {{ sourceLabel(entry.fromSource, entry.fromQuality) }} →</template>
             <template v-else-if="entry.source || entry.quality"> ·</template>
             {{ sourceLabel(entry.source, entry.quality) }}
             <template v-if="entry.reason"> · {{ reasons[entry.reason] }}</template>
+            <template v-if="entry.method"> · {{ entry.method }}</template>
+            <template v-if="entry.statusCode !== undefined"> · HTTP {{ entry.statusCode }}</template>
+            <p v-if="entry.message" class="event-message">{{ entry.message }}</p>
+            <div v-for="url in urls(entry)" :key="url.label" class="event-url">
+              <span>{{ url.label }}：</span>
+              <a v-if="httpUrl(url.value)" :href="httpUrl(url.value)" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">{{ url.value }}</a>
+              <code v-else>{{ url.value }}</code>
+            </div>
           </li>
         </ol>
       </details>
@@ -172,6 +208,11 @@ function sourceLabel(source?: string, quality?: string) {
 </template>
 
 <style scoped>
+.event-url { overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; margin-block: 4px; user-select: text; }
+.event-url a { color: var(--green); text-decoration: underline; }
+.source-position { color: var(--muted); font-size: 12px; }
+.activity-details .event-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+
 .activity-toolbar {
   flex-wrap: wrap;
   display: flex;

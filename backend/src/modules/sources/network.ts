@@ -4,10 +4,15 @@ import { lookup } from 'node:dns/promises';
 import ipaddr from 'ipaddr.js';
 import { gunzipSync, inflateSync, brotliDecompressSync } from 'node:zlib';
 
+export interface RequestTrace { url: string; method: string; statusCode?: number }
+
 const MAX_BODY = 4 * 1024 * 1024;
 export async function openPublicUrl(input: string, options: {
   method?: string; headers?: Record<string, string>; body?: string | Buffer; signal?: AbortSignal;
+  onTrace?: (trace: RequestTrace) => void;
+  idleTimeoutMs?: number;
 } = {}, redirects = 0): Promise<http.IncomingMessage> {
+  if (redirects === 0) options.onTrace?.({url: input, method: options.method || 'GET'});
   const url = new URL(input);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || input.length > 8192) throw new Error('无效的外部地址');
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
@@ -17,6 +22,8 @@ export async function openPublicUrl(input: string, options: {
   const address = addresses[0];
   const headers:Record<string,string> = { 'user-agent': 'Mozilla/5.0', ...options.headers };
   for (const name of Object.keys(headers)) if (/^(host|connection|content-length|transfer-encoding|proxy-.*)$/i.test(name)) delete headers[name];
+  // Compute framing ourselves rather than trusting script-provided length headers.
+  if (options.body !== undefined) headers['content-length'] = String(Buffer.byteLength(options.body));
   const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
     const transport = url.protocol === 'https:' ? https : http;
     const request = transport.request(url, {
@@ -27,7 +34,7 @@ export async function openPublicUrl(input: string, options: {
         else callback(null, address.address, address.family);
       }) as never,
     }, resolve);
-    request.setTimeout(15000, () => request.destroy(new Error('外部请求超时')));
+    request.setTimeout(options.idleTimeoutMs ?? 15000, () => request.destroy(new Error('外部请求超时')));
     request.once('error', reject);
     request.end(options.body);
   });
@@ -66,7 +73,7 @@ export async function requestPublic(url: string, options: Parameters<typeof open
 export async function validateAudio(url: string, signal: AbortSignal) {
   const response = await openPublicUrl(url, { headers: { Range: 'bytes=0-1' }, signal });
   try {
-    if (![200,206].includes(response.statusCode || 0)) throw new Error('音频地址不可用');
+    if (![200,206].includes(response.statusCode || 0)) throw new Error(`音频地址不可用（HTTP ${response.statusCode}）`);
     const type = response.headers['content-type'] || '';
     if (/text\/|json|html|xml/i.test(type)) throw new Error('音源返回的不是音频');
   } finally { response.destroy(); }

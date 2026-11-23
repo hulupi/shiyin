@@ -7,6 +7,7 @@ import { authorizedFile } from '../library/service.js';
 import { sources, importSource, importSourceUrl, checkSource, removeSource, requestSource, saveSources, cancelSource, sourceSettings, saveSourceSettings } from '../sources/service.js';
 import { loadBindings, saveBinding, removeLocalBindings } from '../../db/database.js';
 import { SourceScheduler } from '../sources/scheduler.js';
+import { SOURCE_ATTEMPT_TIMEOUT } from '../sources/timeouts.js';
 import { clearSourceActivity, listSourceActivity, recordPlaybackOutcome, sourceActivity, type SourceActivity } from '../sources/activity.js';
 import { getOnlineCover } from '../catalog/cover.js';
 import { getOnlineLyrics } from '../lyrics/online.js';
@@ -39,20 +40,27 @@ export async function resolveOnlineAudio(track:OnlineTrack,quality:string,exclud
     return capability?.actions.includes('musicUrl') && capability.qualitys.some(item => qualities.includes(item));
   });
   if (!compatible.length) throw new Error('已启用音源不支持这首歌的平台或所选音质');
+  const ordered = [...sources].sort((a,b)=>a.priority-b.priority);
+  const position = (id:string) => ordered.findIndex(source=>source.id===id)+1;
+  const trace = (id:string, quality:string) => (request: import('../sources/network.js').RequestTrace) => activity?.record('request', {
+    source:sourceName(id),quality,requestUrl:request.url,method:request.method,
+  });
+  activity?.record('plan',{message:'本次音源顺序：'+ordered.map((source,index)=>`${index+1}. ${source.name}${source.enabled?'':'（停用）'}`).join(' → ')+'；同音质按此顺序尝试，不支持的平台或音质会跳过'});
   let timedOut = false;
-  const result = await scheduler.resolve(compatible.filter(entry=>!excluded.includes(entry.id)).map(entry=>({
+  const result = await scheduler.resolve(ordered.filter(entry=>entry.enabled).filter(entry=>!excluded.includes(entry.id)).map(entry=>({
     id:entry.id,get enabled(){return entry.enabled;},priority:entry.priority,
     platforms:Object.keys(entry.capabilities).filter(platform=>entry.capabilities[platform].actions.includes('musicUrl')),
     qualities:entry.capabilities[track.platform]?.qualitys||[],
     async resolve(request,signal){
-      const result=await requestSource(entry,{source:track.platform,action:'musicUrl',info:{type:request.quality,musicInfo:track.musicInfo}},signal);
-      if(typeof result!=='string')throw new Error('音源没有返回播放链接');return result;
+      const result=await requestSource(entry,{source:track.platform,action:'musicUrl',info:{type:request.quality,musicInfo:track.musicInfo}},signal,trace(entry.id,request.quality));
+      if(typeof result!=='string')throw new Error('音源没有返回播放链接');activity?.record('audio-url',{source:entry.name,quality:request.quality,audioUrl:result});return result;
     },
-  })),{platform:track.platform,songId:track.songId},{qualities,signal,rejectedSourcesByQuality,validate:validateAudio,
-    onAttempt: activity && ((id, quality) => activity.attempt(sourceName(id), quality)),
-    onFailure: (id, quality, reason) => {
+  })),{platform:track.platform,songId:track.songId},{qualities,signal,rejectedSourcesByQuality,cooldownMs:0,perSourceTimeoutMs:SOURCE_ATTEMPT_TIMEOUT,totalTimeoutMs:180000,validate:validateAudio,
+    onAttempt: activity && ((id, quality) => activity.attempt(sourceName(id), quality,position(id))),
+    onSkip:(id,quality,reason)=>activity?.record('skipped',{source:sourceName(id),quality,sourcePosition:position(id),message:reason==='rejected'?'本次下载中已失败，跳过此音源和音质':reason==='unsupported'?'不支持当前平台或音质':'音源处于冷却期'}),
+    onFailure: (id, quality, reason, message) => {
       timedOut ||= reason === 'timeout';
-      activity?.record('source-failed', { source: sourceName(id), quality, reason });
+      activity?.record('source-failed', { source: sourceName(id), quality, reason, message });
     },
   }).catch(error => {
     signal?.throwIfAborted();

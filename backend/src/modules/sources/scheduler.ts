@@ -12,13 +12,14 @@ export interface ResolveOptions {
   qualities: string[];
   rejectedSourcesByQuality?: ReadonlyMap<string, ReadonlySet<string>>;
   onAttempt?(sourceId: string, quality: string): void;
-  onFailure?(sourceId: string, quality: string, reason: 'timeout' | 'unavailable'): void;
+  onFailure?(sourceId: string, quality: string, reason: 'timeout' | 'unavailable', message?: string): void;
+  onSkip?(sourceId: string, quality: string, reason: 'cooldown' | 'rejected' | 'unsupported'): void;
   totalTimeoutMs?: number;
   perSourceTimeoutMs?: number;
   cooldownMs?: number;
   signal?: AbortSignal;
   /** Must check that the URL actually opens an allowed audio resource. */
-  validate(url: string, signal: AbortSignal): Promise<void>;
+  validate(url: string, signal: AbortSignal, source: { sourceId: string; quality: string }): Promise<void>;
 }
 export class SourceScheduler {
   private cooldowns = new Map<string, number>();
@@ -33,8 +34,10 @@ export class SourceScheduler {
     for (const quality of [...new Set(options.qualities)]) {
       for (const source of [...sources].sort((a,b) => a.priority-b.priority)) {
         parent.throwIfAborted();
-        if (!source.enabled || !source.platforms.includes(song.platform) || !source.qualities.includes(quality) || (this.cooldowns.get(source.id) ?? 0) > Date.now()) continue;
-        if (options.rejectedSourcesByQuality?.get(quality)?.has(source.id)) continue;
+        if (!source.enabled) continue;
+        if (!source.platforms.includes(song.platform) || !source.qualities.includes(quality)) { options.onSkip?.(source.id, quality, 'unsupported'); continue; }
+        if (cooldownMs > 0 && (this.cooldowns.get(source.id) ?? 0) > Date.now()) { options.onSkip?.(source.id, quality, 'cooldown'); continue; }
+        if (options.rejectedSourcesByQuality?.get(quality)?.has(source.id)) { options.onSkip?.(source.id, quality, 'rejected'); continue; }
         options.onAttempt?.(source.id, quality);
         const controller = new AbortController();
         const signal = AbortSignal.any([parent, controller.signal, AbortSignal.timeout(options.perSourceTimeoutMs ?? 12000)]);
@@ -47,7 +50,7 @@ export class SourceScheduler {
               if (!url) throw new Error('EMPTY_URL');
               const parsed = new URL(url);
               if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password) throw new Error('INVALID_URL');
-              await options.validate(url, signal);
+              await options.validate(url, signal, { sourceId: source.id, quality });
               signal.throwIfAborted();
               return { sourceId: source.id, quality, url };
             })(),
@@ -59,11 +62,11 @@ export class SourceScheduler {
           ]);
           this.reset(source.id);
           return result;
-        } catch {
+        } catch (error) {
           parent.throwIfAborted();
           // Do not retain transport errors containing signed URLs or tokens.
           const reason = signal.aborted ? 'timeout' : 'unavailable';
-          options.onFailure?.(source.id, quality, reason);
+          options.onFailure?.(source.id, quality, reason, error instanceof Error ? error.message.slice(0, 1000) : '音源请求失败');
           errors.push({ sourceId: source.id, quality, reason: reason.toUpperCase() });
           if (cooldownMs > 0) {
             const failures = (this.failures.get(source.id) ?? 0) + 1;

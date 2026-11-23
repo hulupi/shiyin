@@ -2,8 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { loadSetting, saveSetting } from '../../db/database.js';
 
 type Operation = 'playback' | 'download' | 'exception';
-type Stage = 'attempt' | 'switch' | 'resolved' | 'source-failed' | 'playing' | 'completed' | 'failed' | 'cancelled';
+type Stage = 'plan' | 'request' | 'response' | 'audio-url' | 'download' | 'skipped' | 'attempt' | 'switch' | 'resolved' | 'source-failed' | 'playing' | 'completed' | 'failed' | 'cancelled';
 interface SourceDetails {
+  requestUrl?: string;
+  audioUrl?: string;
+  downloadUrl?: string;
+  method?: string;
+  statusCode?: number;
+  sourcePosition?: number;
   message?: string;
   source?: string;
   quality?: string;
@@ -54,6 +60,10 @@ export function sourceActivity(operation: Operation, track: ActivityTrack, reque
       trackId: track.id, title: track.title.slice(0, 200), artist: track.artist.slice(0, 200),
       requestedQuality: previous?.requestedQuality ?? requestedQuality,
       ...details,
+      message: details.message?.slice(0, 2000),
+      requestUrl: details.requestUrl?.slice(0, 8192),
+      audioUrl: details.audioUrl?.slice(0, 8192),
+      downloadUrl: details.downloadUrl?.slice(0, 8192),
     };
     events.unshift(event);
     if (events.length > limit) events.length = limit;
@@ -64,11 +74,11 @@ export function sourceActivity(operation: Operation, track: ActivityTrack, reque
   return {
     id: operationId,
     record,
-    attempt(source: string, quality: string) {
+    attempt(source: string, quality: string, sourcePosition?: number) {
       if (lastSource && (lastSource.source !== source || lastSource.quality !== quality)) {
         record('switch', { fromSource: lastSource.source, fromQuality: lastSource.quality, source, quality });
       }
-      lastSource = record('attempt', { source, quality });
+      lastSource = record('attempt', { source, quality, sourcePosition });
     },
   };
 }

@@ -21,7 +21,7 @@ async function emit(relative) {
   for (const entry of await fs.readdir(source, { withFileTypes: true })) {
     if (entry.isDirectory()) {
       await emit(path.join(relative, entry.name));
-    } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
+    } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts') && !entry.name.endsWith('.test.ts')) {
       const code = await fs.readFile(path.join(source, entry.name), 'utf8');
       const { outputText } = ts.transpileModule(code, {
         compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },

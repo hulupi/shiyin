@@ -118,6 +118,8 @@ async function start() {
     { label: '退出', click: () => app.quit() },
   ]));
   tray.on('click', showPlayer);
+  // Windows sends this when an installer or the system requests shutdown.
+  player.on('query-session-end', () => app.quit());
   player.on('close', (event) => {
     if (quitting) return;
     event.preventDefault();
