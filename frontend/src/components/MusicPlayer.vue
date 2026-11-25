@@ -162,7 +162,15 @@ function prefetchOrder(after: Track) {
   });
 }
 
+async function syncServiceQueue() {
+  if (!isAndroidOnline || !nativeId) return;
+  const { getOnlineTrack } = await import('../../../backend/src/modules/catalog/service');
+  const { read } = await import('../android/storage');
+  const tracks = queue.value.filter(track => track.online && track.available).map(track => getOnlineTrack(track.id));
+  await androidPlayback.configureQueue({ tracks, sources: read<unknown[]>('sources', []), quality: preferredQuality.value, mode: playbackMode.value, nextId: nextQueuedId });
+}
 async function prepareNext() {
+  if (isAndroidOnline) return;
   if (!nativeId || !current.value || resolving.value || !playing.value || prefetchController || clearingUpcoming) return;
   const repeat = playbackMode.value === "单曲循环" && !nextQueuedId;
   runNative("repeat", undefined, repeat);
@@ -204,6 +212,7 @@ async function prepareNext() {
 }
 
 async function refreshUpcoming() {
+  if (isAndroidOnline) { await syncServiceQueue().catch(message); return; }
   cancelPrefetch();
   const owner = nativeId;
   if (!owner || clearingUpcoming) return;
@@ -221,6 +230,20 @@ async function refreshUpcoming() {
 
 function applyNativeState(state: AndroidPlaybackState) {
   if (!state.id || !nativeId) return;
+  if (state.serviceQueue && state.id !== nativeId) {
+    const track = queue.value.find(track => track.id === state.trackId);
+    if (!track) return;
+    if (track.id === nextQueuedId) nextQueuedId = undefined;
+    nativeId = state.id;
+    playing.value = false;
+    current.value = track;
+    progress.value = state.position;
+    duration.value = state.duration || track.duration;
+    playbackActivityReported = false;
+    failedSources = [];
+    refreshedSource = false;
+    updateLyrics('/online/' + encodeURIComponent(track.id) + '/lyrics', ++lyricRequest);
+  }
   if (state.id !== nativeId) {
     const index = preparedTracks.findIndex(entry => entry.item.id === state.id);
     if (index < 0) return;
@@ -249,6 +272,7 @@ function applyNativeState(state: AndroidPlaybackState) {
     void prepareNext();
   } else if (!state.playing) playing.value = false;
 
+  if (state.serviceQueue) return;
   // The pending item can still extend an exhausted native queue.
   if (state.ended && prefetchController) return;
   if (!resolving.value && (state.ended || state.failed) && nativeFinished !== state.id) {
@@ -518,6 +542,7 @@ async function play(track: Track, replace = true, retry = false, position?: numb
       nativeId = item.id;
       buffering.value = true;
       await androidPlayback.start({ ...item, position: position ?? 0, volume: volume.value });
+      await syncServiceQueue();
       if (request === lyricRequest) restorePosition = undefined;
     } else if (audio.value) {
       audio.value.volume = volume.value;
@@ -669,7 +694,7 @@ function next(delta = 1, ended = false) {
     else if (audio.value) void mediaControl.play(audio.value).catch(message);
     return;
   }
-  if (isAndroidOnline && !ended && delta === 1 && preparedTracks.length) {
+  if (isAndroidOnline && !ended && delta === 1 && nativeId) {
     runNative("next");
     return;
   }

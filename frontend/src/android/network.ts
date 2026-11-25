@@ -3,7 +3,7 @@ import { Buffer } from 'buffer';
 
 const legacyCatalogHosts = new Set(["c.y.qq.com","kbangserver.kuwo.cn","nmobi.kuwo.cn","nplserver.kuwo.cn","qukudata.kuwo.cn","search.kuwo.cn","songsearch.kugou.com","wapi.kuwo.cn"]);
 
-const bridge = registerPlugin<{
+const capacitorNetwork = registerPlugin<{
   connectionStatus(): Promise<{ connected: boolean }>;
   request(options: {
     url: string; method: string; headers: Record<string, string>;
@@ -11,6 +11,7 @@ const bridge = registerPlugin<{
   }): Promise<{ statusCode: number; headers: Record<string, string>; data: string }>;
   audio(options: { url: string }): Promise<{ path: string }>;
 }>('ShiyinNetwork');
+const bridge = (globalThis as unknown as { shiyinBackgroundNetwork?: typeof capacitorNetwork }).shiyinBackgroundNetwork ?? capacitorNetwork;
 
 export async function requestPublic(url: string, options: {
   method?: string; headers?: Record<string, string>; body?: string | Uint8Array; signal?: AbortSignal; timeout?: number;

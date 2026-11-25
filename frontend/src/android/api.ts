@@ -26,8 +26,8 @@ function readHistory() {
   return history;
 }
 
-async function resolve(id: string, quality: string, exclude: string[], signal?: AbortSignal) {
-  const track = getOnlineTrack(id);
+async function resolve(id: string, quality: string, exclude: string[], signal?: AbortSignal, suppliedTrack?: ReturnType<typeof getOnlineTrack>) {
+  const track = suppliedTrack ?? getOnlineTrack(id);
   const position = qualities.indexOf(quality);
   if (position < 0) throw new Error('无效音质');
   await requireAndroidConnection(signal);
@@ -240,4 +240,8 @@ export async function requestAndroidApi(path: string, init: RequestInit) {
       return playlistRequest(method, id, action, detail, body);
   }
   throw new Error('此功能在安卓端不可用');
+}
+
+export function resolveBackgroundTrack(track: ReturnType<typeof getOnlineTrack>, quality: string) {
+  return resolve(track.id, quality, [], undefined, track);
 }

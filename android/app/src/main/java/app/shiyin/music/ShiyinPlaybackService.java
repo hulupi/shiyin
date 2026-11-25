@@ -29,7 +29,22 @@ public final class ShiyinPlaybackService extends MediaSessionService {
     static final String TRACK_ID = "shiyinTrackId";
     private static final SessionCommand FAVORITE = new SessionCommand("shiyin.favorite.add", Bundle.EMPTY);
     private static final SessionCommand UNFAVORITE = new SessionCommand("shiyin.favorite.remove", Bundle.EMPTY);
+    static ShiyinPlaybackService active;
+    private ShiyinBackgroundQueue backgroundQueue;
     private MediaSession session;
+    void configureQueue(org.json.JSONObject config) {
+        if (backgroundQueue != null) backgroundQueue.close();
+        Player player = session.getPlayer();
+        int upcoming = player.getCurrentMediaItemIndex() + 1;
+        if (upcoming < player.getMediaItemCount()) player.removeMediaItems(upcoming, player.getMediaItemCount());
+        backgroundQueue = new ShiyinBackgroundQueue(this, player, config);
+    }
+    void stopBackground() { if (backgroundQueue != null) { backgroundQueue.close(); backgroundQueue = null; } }
+    void skipBackground() { if (backgroundQueue != null) backgroundQueue.skip(); }
+    boolean ownsQueue() { return backgroundQueue != null; }
+    private int recoveryAttempts;
+    private boolean recovering;
+
     private SharedPreferences favorites;
     private final SharedPreferences.OnSharedPreferenceChangeListener favoriteChanges = (storage, key) -> {
         if (ShiyinFavorites.KEY.equals(key)) updateFavoriteButton();
@@ -37,6 +52,7 @@ public final class ShiyinPlaybackService extends MediaSessionService {
 
     @Override public void onCreate() {
         super.onCreate();
+        active = this;
         favorites = ShiyinFavorites.store(this);
         OkHttpDataSource.Factory network = new OkHttpDataSource.Factory(ShiyinNetwork.mediaClient())
             .setUserAgent("Mozilla/5.0");
@@ -49,17 +65,42 @@ public final class ShiyinPlaybackService extends MediaSessionService {
         Handler playbackHandler = new Handler(player.getApplicationLooper());
         player.addListener(new Player.Listener() {
             @Override public void onMediaItemTransition(MediaItem item, int reason) {
+                if (backgroundQueue != null) backgroundQueue.transitioned();
+                recoveryAttempts = 0;
+                recovering = false;
                 updateFavoriteButton();
             }
 
+            @Override public void onIsPlayingChanged(boolean playing) {
+                if (playing && backgroundQueue != null) backgroundQueue.playing();
+            }
+            @Override public void onPlaybackStateChanged(int state) {
+                if (backgroundQueue != null && state == Player.STATE_ENDED) backgroundQueue.ended();
+            }
             @Override public void onPlayerError(@NonNull PlaybackException error) {
-                if (!player.getPlayWhenReady() || !player.hasNextMediaItem()) return;
-                playbackHandler.post(() -> {
-                    if (session == null || player.getPlayerError() != error
-                            || !player.getPlayWhenReady() || !player.hasNextMediaItem()) return;
-                    player.seekToNextMediaItem();
+                if (backgroundQueue != null) {
+                    if (player.getPlayWhenReady()) backgroundQueue.error();
+                    return;
+                }
+                if (!player.getPlayWhenReady()) return;
+                // Recover in the service even when the UI JavaScript is suspended.
+                boolean retry = recoveryAttempts++ < 2;
+                recovering = retry || player.hasNextMediaItem();
+                if (!recovering) {
+                    player.pause();
+                    return;
+                }
+                playbackHandler.postDelayed(() -> {
+                    if (session == null || player.getPlayerError() != error) return;
+                    recovering = false;
+                    if (!player.getPlayWhenReady()) return;
+                    if (!retry) {
+                        if (!player.hasNextMediaItem()) return;
+                        player.seekToNextMediaItem();
+                    }
                     player.prepare();
-                });
+                    player.play();
+                }, retry ? recoveryAttempts * 1500L : 0L);
             }
         });
         PendingIntent activity = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
@@ -117,6 +158,8 @@ public final class ShiyinPlaybackService extends MediaSessionService {
     }
 
     @Override public void onDestroy() {
+        active = null;
+        if (backgroundQueue != null) { backgroundQueue.close(); backgroundQueue = null; }
         if (favorites != null) favorites.unregisterOnSharedPreferenceChangeListener(favoriteChanges);
         if (session != null) {
             session.getPlayer().release();

@@ -9,7 +9,7 @@ const { version } = JSON.parse(
 ) as { version: string };
 
 export default defineConfig(({ mode }) => ({
-  build: mode === 'android' ? { target: 'chrome83', cssTarget: 'chrome83' } : undefined,
+  build: mode === 'android' ? { target: 'chrome83', cssTarget: 'chrome83', rollupOptions: { input: { app: fileURLToPath(new URL('./index.html', import.meta.url)), playback: fileURLToPath(new URL('./playback-background.html', import.meta.url)) } } } : undefined,
   define: { __APP_VERSION__: JSON.stringify(version) },
   plugins: [vue()],
   resolve: {

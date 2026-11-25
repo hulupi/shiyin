@@ -54,12 +54,15 @@ public final class ShiyinPlayback extends Plugin {
         JSObject state = new JSObject();
         MediaItem item = player.getCurrentMediaItem();
         state.put("id", item == null ? "" : item.mediaId);
+        Bundle extras = item == null ? null : item.mediaMetadata.extras;
+        state.put("trackId", extras == null ? "" : extras.getString(ShiyinPlaybackService.TRACK_ID, ""));
+        state.put("serviceQueue", ShiyinPlaybackService.active != null && ShiyinPlaybackService.active.ownsQueue());
         state.put("playing", player.isPlaying());
         state.put("buffering", player.getPlayWhenReady() && player.getPlaybackState() == Player.STATE_BUFFERING);
         state.put("ended", player.getPlaybackState() == Player.STATE_ENDED);
-        // The service advances past a failed item when it has another item ready.
+        // Let the service finish bounded recovery before asking the UI to resolve again.
         state.put("failed", player.getPlayerError() != null
-            && !(player.getPlayWhenReady() && player.hasNextMediaItem()));
+            && !player.getPlayWhenReady());
         state.put("position", player.getCurrentPosition() / 1000.0);
         state.put("duration", player.getDuration() == C.TIME_UNSET ? 0 : player.getDuration() / 1000.0);
         return state;
@@ -83,6 +86,7 @@ public final class ShiyinPlayback extends Plugin {
         try { item = mediaItem(call); }
         catch (IOException error) { call.reject("音频地址已失效，请重新播放"); return; }
         withPlayer(call, player -> {
+            if (ShiyinPlaybackService.active != null) ShiyinPlaybackService.active.stopBackground();
             player.setMediaItem(item, Math.max(0, Math.round(call.getDouble("position", 0.0) * 1000)));
             player.setVolume(call.getFloat("volume", 1.0f));
             player.prepare();
@@ -91,6 +95,13 @@ public final class ShiyinPlayback extends Plugin {
         });
     }
 
+    @PluginMethod public void configureQueue(PluginCall call) {
+        withPlayer(call, player -> {
+            if (ShiyinPlaybackService.active == null) { call.reject("播放服务未连接"); return; }
+            ShiyinPlaybackService.active.configureQueue(call.getData());
+            call.resolve();
+        });
+    }
     @PluginMethod public void clearUpcoming(PluginCall call) {
         withPlayer(call, player -> {
             MediaItem current = player.getCurrentMediaItem();
@@ -118,7 +129,11 @@ public final class ShiyinPlayback extends Plugin {
                 boolean resumeAtNext = player.getPlaybackState() == Player.STATE_ENDED
                     && player.getPlayWhenReady();
                 player.addMediaItem(upcoming);
-                if (resumeAtNext && player.hasNextMediaItem()) player.seekToNextMediaItem();
+                if (resumeAtNext && player.hasNextMediaItem()) {
+                    player.seekToNextMediaItem();
+                    player.prepare();
+                    player.play();
+                }
             }
             JSObject result = new JSObject();
             result.put("applied", applied);
@@ -130,7 +145,7 @@ public final class ShiyinPlayback extends Plugin {
         withPlayer(call, player -> {
             switch (call.getString("action", "")) {
                 case "pause": player.pause(); break;
-                case "next": player.seekToNextMediaItem(); break;
+                case "next": if (ShiyinPlaybackService.active != null && ShiyinPlaybackService.active.ownsQueue()) ShiyinPlaybackService.active.skipBackground(); else player.seekToNextMediaItem(); break;
                 case "play":
                     if (player.getPlaybackState() == Player.STATE_IDLE) player.prepare();
                     if (player.getPlaybackState() == Player.STATE_ENDED) player.seekTo(0);

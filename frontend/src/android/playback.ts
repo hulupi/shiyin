@@ -12,6 +12,8 @@ export interface AndroidPlaybackItem {
 
 export interface AndroidPlaybackState {
   id: string;
+  trackId?: string;
+  serviceQueue?: boolean;
   playing: boolean;
   buffering: boolean;
   ended: boolean;
@@ -22,6 +24,7 @@ export interface AndroidPlaybackState {
 
 export const androidPlayback = registerPlugin<{
   start(item: AndroidPlaybackItem & { position: number; volume: number }): Promise<void>;
+  configureQueue(options: { tracks: unknown[]; sources: unknown[]; quality: string; mode: string; nextId?: string }): Promise<void>;
   clearUpcoming(options: { currentId: string }): Promise<{ applied: boolean }>;
   append(options: { afterId: string } & AndroidPlaybackItem): Promise<{ applied: boolean }>;
   control(options: { action: "play" | "pause" | "next" | "seek" | "volume" | "repeat" | "state"; value?: number; enabled?: boolean }): Promise<AndroidPlaybackState>;
