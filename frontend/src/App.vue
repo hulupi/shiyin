@@ -237,9 +237,22 @@ onUnmounted(() => {
 .menu-toggle:focus-visible { outline: 2px solid var(--green); }
 :global(.mobile-navigation-overlay.el-overlay) { background-color: rgb(0 0 0 / 45%); }
 :global(.mobile-navigation-drawer.el-drawer) { background: var(--sidebar-surface); }
-:global(.mobile-navigation-drawer .el-drawer__body) { padding: 0; }
+:global(.mobile-navigation-drawer .el-drawer__body) {
+  padding: var(--app-safe-top) 0 var(--app-safe-bottom);
+}
+:global(:root) {
+  --app-safe-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px));
+  --app-safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px));
+}
+// Android already lays the WebView out between the native bars.
+:global(html.android) {
+  --app-safe-top: 0px;
+  --app-safe-bottom: 0px;
+}
 @media (max-width: 700px) {
   .app-shell {
+    box-sizing: border-box;
+    padding-top: var(--app-safe-top);
     --mobile-header-height: 53px;
     --mobile-header-icon-inset: 8px;
     grid-template-columns: minmax(0, 1fr);

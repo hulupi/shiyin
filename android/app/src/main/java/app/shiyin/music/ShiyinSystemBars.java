@@ -25,6 +25,8 @@ public final class ShiyinSystemBars extends Plugin {
     private float drawerWidth;
     private boolean darkIcons;
     private boolean hasAppearance;
+    private final BarBackground windowBackground = new BarBackground();
+    private final BarBackground containerBackground = new BarBackground();
 
     @PluginMethod
     public void setAppearance(PluginCall call) {
@@ -42,9 +44,14 @@ public final class ShiyinSystemBars extends Plugin {
                 ? Color.parseColor(drawer) : null;
             status = Color.parseColor(statusColor);
             navigation = Color.parseColor(navigationColor);
-            darkIcons = Boolean.TRUE.equals(call.getBoolean("darkIcons", false));
-            hasAppearance = true;
-            applyAppearance();
+            boolean newDarkIcons = Boolean.TRUE.equals(call.getBoolean("darkIcons", false));
+            if (!hasAppearance || darkIcons != newDarkIcons) {
+                darkIcons = newDarkIcons;
+                hasAppearance = true;
+                applyAppearance();
+            }
+            windowBackground.update();
+            containerBackground.update();
             call.resolve();
         });
     }
@@ -61,12 +68,12 @@ public final class ShiyinSystemBars extends Plugin {
     private void applyAppearance() {
         Window window = getActivity().getWindow();
         WebView webView = getBridge().getWebView();
-        window.setBackgroundDrawable(systemBarBackground());
+        window.setBackgroundDrawable(windowBackground);
         if (webView.getParent() instanceof View container) {
-            container.setBackground(systemBarBackground());
+            container.setBackground(containerBackground);
         }
-        window.setStatusBarColor(drawerColor == null ? status : Color.TRANSPARENT);
-        window.setNavigationBarColor(drawerColor == null ? navigation : Color.TRANSPARENT);
+        window.setStatusBarColor(Color.TRANSPARENT);
+        window.setNavigationBarColor(Color.TRANSPARENT);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.setStatusBarContrastEnforced(false);
             window.setNavigationBarContrastEnforced(false);
@@ -76,24 +83,26 @@ public final class ShiyinSystemBars extends Plugin {
         controller.setAppearanceLightNavigationBars(darkIcons);
     }
 
-    private GradientDrawable systemBarBackground() {
-        int[] colors = {status, status, navigation, navigation};
-        Integer menu = drawerColor;
-        if (menu == null) {
-            return new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors);
+    private final class BarBackground extends GradientDrawable {
+        private final Paint drawerPaint = new Paint();
+
+        BarBackground() {
+            super(Orientation.TOP_BOTTOM, new int[] {Color.BLACK, Color.BLACK});
         }
 
-        float visibleDrawerWidth = drawerWidth;
-        Paint drawerPaint = new Paint();
-        drawerPaint.setColor(menu);
-        return new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors) {
-            @Override
-            public void draw(Canvas canvas) {
-                super.draw(canvas);
-                Rect bounds = getBounds();
-                float width = Math.min(visibleDrawerWidth, bounds.width());
-                canvas.drawRect(bounds.left, bounds.top, bounds.left + width, bounds.bottom, drawerPaint);
-            }
-        };
+        void update() {
+            setColors(new int[] {status, status, navigation, navigation});
+            invalidateSelf();
+        }
+
+        @Override
+        public void draw(Canvas canvas) {
+            super.draw(canvas);
+            if (drawerColor == null || drawerWidth <= 0) return;
+            Rect bounds = getBounds();
+            drawerPaint.setColor(drawerColor);
+            float width = Math.min(drawerWidth, bounds.width());
+            canvas.drawRect(bounds.left, bounds.top, bounds.left + width, bounds.bottom, drawerPaint);
+        }
     }
 }

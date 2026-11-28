@@ -14,6 +14,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ShiyinFavorites.class);
         registerPlugin(ShiyinSystemBars.class);
         super.onCreate(savedInstanceState);
+        getWindow().setBackgroundDrawableResource(R.color.shiyin_launch_background);
         if (bridge != null && Build.VERSION.SDK_INT < 35) {
             // Use the system's content bounds on Android versions that still
             // support fitting the Activity between its native bars.

@@ -4,8 +4,8 @@ const config: CapacitorConfig = {
   appId: 'app.shiyin.music',
   appName: '拾音',
   webDir: 'frontend/dist',
-  android: { backgroundColor: '#101311' },
-  plugins: { SystemBars: { style: 'DARK' } },
+  android: { backgroundColor: '#212924' },
+  plugins: { SystemBars: { style: 'DARK', insetsHandling: 'native' } },
 };
 
 export default config;
