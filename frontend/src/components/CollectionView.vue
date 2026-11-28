@@ -70,7 +70,8 @@ watch(
           @click="emit('scan')"
         />
         <slot name="sort" />
-        <div v-if="local" class="collection-summary">
+        <slot name="actions" />
+        <div v-if="local && trackCount !== undefined" class="collection-summary">
           <span
             ><strong>{{ trackCount }}</strong> 本地歌曲</span
           ><span

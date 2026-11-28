@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import ListSkeleton from "../components/ListSkeleton.vue";
 import CatalogCover from "../components/CatalogCover.vue";
+import CatalogDetailToolbar from "../components/CatalogDetailToolbar.vue";
 import RefreshButton from "../components/RefreshButton.vue";
 import { nearScrollEnd, usePageScroll } from "../stores/usePageScroll";
 import PageLayout from "../components/PageLayout.vue";
@@ -57,20 +58,6 @@ const groups = computed(() => [
 const directoryPage = ref(1),
   directoryHasMore = ref(false),
   directoryFailed = ref(false);
-const keyword = ref(""),
-  submittedSearch = ref(""),
-  searchTotal = ref(0);
-function search() {
-  submittedSearch.value = keyword.value.trim();
-  goDirectory();
-}
-function clearSearch() {
-  keyword.value = "";
-  if (submittedSearch.value) {
-    submittedSearch.value = "";
-    goDirectory();
-  }
-}
 interface FilterOption {
   id: string;
   name: string;
@@ -90,24 +77,17 @@ const availableSorts = computed(() =>
 );
 function directoryUrl(pageNumber = 1, refresh = false) {
   const query = new URLSearchParams({ page: String(pageNumber) });
-  if (submittedSearch.value) query.set("q", submittedSearch.value);
-  else {
-    query.set("sort", sort.value);
-    query.set("category", category.value);
-  }
+  query.set("sort", sort.value);
+  query.set("category", category.value);
   if (refresh) query.set("refresh", "1");
-  return `/discover/${platform.value}${submittedSearch.value ? "/search" : ""}?${query}`;
+  return `/discover/${platform.value}?${query}`;
 }
 function changeSort(id: string | number | boolean) {
-  if (typeof id !== "string" || (sort.value === id && !submittedSearch.value)) return;
-  keyword.value = "";
-  submittedSearch.value = "";
+  if (typeof id !== "string" || sort.value === id) return;
   sort.value = id;
   goDirectory();
 }
 function changeCategory() {
-  keyword.value = "";
-  submittedSearch.value = "";
   if (!availableSorts.value.some((item) => item.id === sort.value))
     sort.value = availableSorts.value[0]?.id || "";
   goDirectory();
@@ -151,7 +131,6 @@ async function loadCharts(refresh = false) {
     const data = await api(directoryUrl(1, refresh), { signal: active.signal });
     if (controller === active) {
       charts.value = data.charts;
-      searchTotal.value = Number(data.total) || 0;
       directoryHasMore.value = Boolean(data.hasMore);
       await nextTick();
       const directory =
@@ -338,7 +317,6 @@ function refresh() {
 }
 function routeQuery() {
   return {
-    ...(submittedSearch.value ? { q: submittedSearch.value } : {}),
     ...(sort.value ? { sort: sort.value } : {}),
     ...(category.value !== "all" ? { category: category.value } : {}),
   };
@@ -346,11 +324,20 @@ function routeQuery() {
 function goDirectory() {
   navigate("发现歌单", platform.value, "", routeQuery());
 }
+const returnSearch = computed(() => route.value.query.search || route.value.query.q);
+function goBack() {
+  if (returnSearch.value) {
+    navigate("搜索", undefined, "", { mode: "playlists", platform: platform.value, q: returnSearch.value });
+  } else {
+    goDirectory();
+  }
+}
 function goChart(chart: Chart) {
   navigate("发现歌单", platform.value, chart.id, {
     ...routeQuery(),
     name: chart.name,
     author: chart.update,
+    image: chart.image,
   });
 }
 watch(
@@ -363,14 +350,16 @@ watch(
       : "wy";
     category.value = r.query.category || "all";
     sort.value = r.query.sort || "";
-    submittedSearch.value = r.query.q || "";
-    keyword.value = submittedSearch.value;
+    if (!r.id && r.query.q) {
+      navigate("搜索", undefined, "", { mode: "playlists", platform: platform.value, q: r.query.q }, true);
+      return;
+    }
     if (r.id)
       void openChart({
         id: r.id,
         name: r.query.name || "歌单",
         update: r.query.author || "",
-        image: "",
+        image: r.query.image || "",
         description: "",
         count: 0,
         group: "",
@@ -385,13 +374,16 @@ onUnmounted(() => {
 });
 </script>
 <template>
-  <PageLayout title="发现歌单" description="浏览各平台的精选公开歌单" directory>
+  <PageLayout title="发现歌单" directory>
+    <template v-if="selected" #detail-toolbar>
+      <CatalogDetailToolbar :loading="loading" :back-label="returnSearch ? '返回搜索结果' : '返回歌单列表'" @back="goBack" @refresh="refresh" />
+    </template>
     <div
       ref="container"
       class="charts-page discovery-page"
       @scroll.capture="checkScroll"
     >
-      <div class="platform-tabs music-segmented-scroll">
+      <div v-if="!selected" class="platform-tabs music-segmented-scroll">
         <el-segmented
           class="music-segmented"
           :model-value="platform"
@@ -402,10 +394,11 @@ onUnmounted(() => {
         />
       </div>
       <div v-if="!selected" class="playlist-filters">
-        <div v-if="availableSorts.length" class="playlist-sort music-segmented-scroll">
+        <div class="playlist-sort music-segmented-scroll">
           <el-segmented
+            v-if="availableSorts.length"
             class="music-segmented"
-            :model-value="submittedSearch ? '' : sort"
+            :model-value="sort"
             :options="availableSorts"
             :props="{ value: 'id', label: 'name' }"
             aria-label="歌单排序"
@@ -413,7 +406,7 @@ onUnmounted(() => {
           />
         </div>
         <el-select
-          v-if="!submittedSearch && sorts.length"
+          v-if="sorts.length"
           v-model="category"
           filterable
           clearable
@@ -435,35 +428,32 @@ onUnmounted(() => {
               :value="item.id"
               :label="item.name" /></el-option-group
         ></el-select>
-        <el-form class="playlist-search-form" @submit.prevent="search"
-          ><el-input
-            v-model="keyword"
-            :placeholder="`搜索${platformName}公开歌单`"
-            aria-label="搜索公开歌单"
-            maxlength="100"
-            clearable
-            @clear="clearSearch"
-            ><template #prefix
-              ><AppIcon name="搜索" :size="16" /></template></el-input
-          ><el-button
-            class="primary"
-            type="primary"
-            native-type="submit"
-            :disabled="loading || !keyword.trim()"
-            >搜索</el-button
-          ></el-form
-        >
-        <RefreshButton :disabled="loading" @click="refresh" />
+        <RefreshButton :loading="loading" @click="refresh" />
       </div>
       
       <template v-if="selected">
         <div class="chart-detail-heading">
+          <CatalogCover class="playlist-detail-cover" :name="selected.name" :image="selected.image" compact-title />
           <div class="chart-detail-copy">
-            <h2>{{ selected.name }}</h2>
+            <h2 :title="selected.name">{{ selected.name }}</h2>
             <p>
               {{ platformName }}<span v-if="total"> · {{ total }} 首歌曲</span
               ><span v-if="selected.update"> · {{ selected.update }}</span>
             </p>
+            <div class="playlist-detail-actions">
+              <el-button
+                class="primary playlist-play-all"
+                type="primary"
+                :disabled="!tracks.length"
+                @click="playList(tracks[0], tracks)"
+              ><AppIcon name="play" :size="14" />播放全部</el-button>
+              <ImportPlaylistButton
+                v-if="tracks.length"
+                :key="platform + ':' + selected.id"
+                :name="selected.name"
+                :source="{ platform, id: selected.id }"
+              />
+            </div>
           </div>
         </div>
         <el-alert v-if="error" type="error" :closable="false" :title="error"
@@ -471,7 +461,6 @@ onUnmounted(() => {
         >
         <SongTable
           batch
-          searchable
           :key="selected.id"
           :paginate="false"
           :tracks="tracks"
@@ -486,24 +475,6 @@ onUnmounted(() => {
           @notify="emit('notify', $event)"
           @navigate="emit('navigate', $event)"
         >
-          <template #actions>
-            <el-button class="secondary" @click="goDirectory"
-              >← {{ submittedSearch ? "搜索结果" : "全部歌单" }}</el-button
-            ><RefreshButton :loading="loading" @click="refresh" />
-            <el-button
-              class="primary"
-              type="primary"
-              :disabled="!tracks.length"
-              @click="playList(tracks[0], tracks)"
-              ><AppIcon name="play" :size="15" />播放全部</el-button
-            >
-            <ImportPlaylistButton
-              v-if="tracks.length"
-              :key="platform + ':' + selected.id"
-              :name="selected.name"
-              :source="{ platform, id: selected.id }"
-            />
-          </template>
           <template #empty>
             <div class="charts-state">
               <AppIcon name="发现歌单" :size="32" />
@@ -514,14 +485,7 @@ onUnmounted(() => {
       </template>
       <div v-else-if="!charts.length && !loading" class="charts-state">
         <AppIcon name="发现歌单" :size="34" />
-        <p>
-          {{
-            error ||
-                (submittedSearch
-                  ? "没有找到匹配的歌单，换个关键词试试"
-                  : "暂无可用歌单")
-          }}
-        </p>
+        <p>{{ error || "暂无可用歌单" }}</p>
         <RefreshButton v-if="error" label="重新加载" @click="loadCharts(true)" />
       </div>
       <div
@@ -545,7 +509,7 @@ onUnmounted(() => {
               >
                 <div class="chart-art">
                   <CatalogCover :name="chart.name" :image="chart.image" compact-title />
-                  <span class="chart-play"><AppIcon name="play" :size="20" /></span>
+                  <span class="chart-play" aria-hidden="true"><AppIcon name="play" :size="17" fill="currentColor" /></span>
                 </div>
                 <div class="chart-card-copy">
                   <strong :title="chart.name">{{ chart.name }}</strong
@@ -554,8 +518,8 @@ onUnmounted(() => {
                       class="playlist-card-author"
                       :title="chart.update || '未知作者'"
                       >{{ chart.update || "未知作者" }}</span
-                    ><span class="playlist-card-count"
-                      >{{ chart.count }} 首歌曲</span
+                    ><span v-if="chart.count > 0" class="playlist-card-count"
+                      >{{ chart.count }} 首</span
                     ></small
                   >
                 </div>
@@ -665,16 +629,28 @@ onUnmounted(() => {
 }
 .chart-play {
   position: absolute;
-  inset: 0;
+  right: 12px;
+  bottom: 12px;
+  width: 34px;
+  height: 34px;
   display: grid;
   place-items: center;
-  background: #0006;
+  border-radius: 50%;
+  background: #44d17a;
+  color: #0a2a17;
+  box-shadow: 0 4px 16px #0003;
   opacity: 0;
-  transition: opacity 0.15s;
+  transform: translateY(5px);
+  transition: opacity 0.18s, transform 0.18s;
 }
 .chart-card:hover .chart-play,
 .chart-card:focus-visible .chart-play {
   opacity: 1;
+  transform: translateY(0);
+}
+.chart-card:hover .chart-card-copy strong,
+.chart-card:focus-visible .chart-card-copy strong {
+  color: var(--day-accent-text, #a6efbf);
 }
 .chart-card-copy {
   min-width: 0;
@@ -825,8 +801,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   margin-top: 4px;
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 1.2;
 }
 .playlist-card-author {
   min-width: 0;
@@ -841,11 +817,11 @@ onUnmounted(() => {
 }
 @media (max-width: 700px) {
   .discovery-page .chart-grid {
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr));
-    gap: 20px 14px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px 10px;
   }
   .discovery-page .chart-card {
-    gap: 10px;
+    gap: 6px;
   }
 }
 .discovery-load-status {
@@ -861,7 +837,7 @@ onUnmounted(() => {
 .playlist-filters {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
   flex-wrap: wrap;
   margin: -8px 32px 18px 0;
   flex-shrink: 0;
@@ -869,32 +845,28 @@ onUnmounted(() => {
 .playlist-category.el-select {
   width: 200px;
 }
+.playlist-sort {
+  flex: 0 0 126px;
+  min-width: 0;
+}
 @media (max-width: 700px) {
   .discovery-page > .platform-tabs {
     margin-bottom: 10px;
   }
   .playlist-filters {
-    display: grid;
-    grid-template-columns: minmax(0, 3fr) minmax(0, 1fr) 32px;
-    gap: 8px;
     margin: 0 14px 12px 0;
   }
   .playlist-category.el-select {
-    grid-column: 2 / -1;
-    width: 100%;
+    flex: 1;
+    width: auto;
     min-width: 0;
-  }
-  .playlist-category.el-select :deep(.el-select__wrapper) {
-    min-height: 32px;
-    padding-block: 0;
-  }
-  .playlist-filters > :deep(.refresh-button) {
-    grid-column: 3;
-    justify-self: end;
   }
 }
 .playlist-category :deep(.el-select__wrapper) {
-  min-height: 38px;
+  box-sizing: border-box;
+  height: 32px;
+  min-height: 32px;
+  padding-block: 0;
   border-radius: 9px;
   background: var(--day-surface-soft, #15231a);
 }
@@ -959,66 +931,6 @@ onUnmounted(() => {
   background: var(--day-selected, #263c2e);
 }
 
-.playlist-search-form {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-  min-width: 0;
-}
-.playlist-search-form :deep(.el-input) {
-  width: 270px;
-}
-.playlist-search-form :deep(.el-input__wrapper) {
-  background: var(--day-surface-soft, #15231a);
-  border-radius: 9px;
-}
-.playlist-search-summary {
-  margin: -5px 32px 16px 0;
-  flex-shrink: 0;
-  font-size: 14px;
-  color: var(--day-muted, #93b09e);
-  overflow-wrap: anywhere;
-}
-@media (max-width: 1100px) {
-  .playlist-search-form :deep(.el-input) {
-    width: 210px;
-  }
-}
-@media (max-width: 700px) {
-  .playlist-search-form {
-    grid-column: 1 / 3;
-    margin-left: 0;
-  }
-  .playlist-search-form :deep(.el-input) {
-    flex: 1;
-    width: 0;
-  }
-  .playlist-search-form :deep(.el-input__wrapper),
-  .playlist-search-form :deep(.el-input__inner),
-  .playlist-search-form > :deep(.el-button) {
-    min-height: 0;
-    height: 32px;
-  }
-  .playlist-search-form > :deep(.el-button) {
-    padding-block: 0;
-  }
-  .playlist-search-summary {
-    margin-right: 14px;
-  }
-}
-.playlist-search-summary {
-  min-height: 24px;
-  line-height: 24px;
-  margin-top: -6px;
-  margin-bottom: 10px;
-}
-.playlist-search-form > :deep(.el-button) {
-  box-sizing: border-box;
-  flex: 0 0 72px;
-  width: 72px;
-  padding-inline: 4px;
-}
 .discovery-page .directory-updating {
   pointer-events: none;
 }
@@ -1027,20 +939,80 @@ onUnmounted(() => {
   cursor: progress;
 }
 
+.discovery-page .chart-detail-heading {
+  flex-wrap: nowrap;
+  gap: 18px;
+  margin-bottom: 8px;
+}
+.discovery-page .chart-detail-copy {
+  flex: 1;
+  min-width: 0;
+}
+.chart-detail-copy h2 {
+  font-size: 24px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.playlist-detail-cover {
+  flex: 0 0 108px;
+}
+.playlist-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.playlist-detail-actions :deep(.el-button) {
+  box-sizing: border-box;
+  width: 104px;
+  height: 30px;
+  min-height: 30px;
+  margin: 0;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+.playlist-detail-actions .playlist-play-all.el-button {
+  min-height: 30px;
+  padding-block: 0;
+}
+.playlist-detail-actions :deep(.primary > span) {
+  gap: 5px;
+}
 @media (max-width: 700px) {
-  .chart-detail-heading {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 18px;
-  }
-  .chart-detail-heading .chart-detail-copy {
-    grid-column: 1 / -1;
-    grid-row: 1;
+  .discovery-page .chart-detail-heading { gap: 12px; }
+  .playlist-detail-cover { flex-basis: 84px; }
+  .discovery-page .chart-detail-copy {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    flex: 1;
     min-width: 0;
+    min-height: 84px;
   }
-  .chart-detail-copy h2 { font-size: 19px; line-height: 1.4; overflow-wrap: anywhere; }
-  .chart-detail-copy p { font-size: 12px; line-height: 1.6; }
+  .chart-detail-copy h2 {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin: 0;
+    font-size: 15px;
+    line-height: 17px;
+  }
+  .chart-detail-copy p {
+    max-width: 100%;
+    overflow: hidden;
+    margin: 3px 0 0;
+    font-size: 12px;
+    line-height: 15px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .playlist-detail-actions { margin-top: auto; }
+  .playlist-detail-actions :deep(.el-button) {
+    width: auto;
+    padding-inline: 8px;
+    font-size: 12px;
+  }
 }
 </style>

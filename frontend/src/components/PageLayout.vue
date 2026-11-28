@@ -2,7 +2,6 @@
 import { useSlots } from "vue";
 defineProps<{
   title: string;
-  description: string;
   local?: boolean;
   floating?: boolean;
   settings?: boolean;
@@ -11,14 +10,17 @@ defineProps<{
 const slots = useSlots();
 </script>
 <template>
-  <section class="route-page" :class="{ 'directory-layout': directory, 'settings-layout': settings }">
-    <header v-if="!settings" class="topbar">
-      <div class="topbar-heading">
-        <h1>{{ title }}</h1>
-        <p>{{ description }}</p>
-      </div>
+  <section class="route-page" :aria-label="title" :class="{ 'directory-layout': directory, 'settings-layout': settings }">
+    <header
+      v-if="!settings && (slots.actions || slots['detail-toolbar'])"
+      class="topbar"
+      :class="{ 'has-detail-toolbar': slots['detail-toolbar'] }"
+    >
       <div v-if="slots.actions" class="topbar-actions">
         <slot name="actions" />
+      </div>
+      <div v-if="slots['detail-toolbar']" class="detail-toolbar">
+        <slot name="detail-toolbar" />
       </div>
       
     </header>
@@ -212,27 +214,13 @@ const slots = useSlots();
   padding-bottom: 0;
 }
 .topbar {
-  height: 86px;
-  gap: 20px;
-}
-.topbar-heading {
-  min-width: 0;
-  flex: 1;
-}
-.topbar-heading h1 {
-  font-size: 24px;
-  line-height: 1.35;
-  letter-spacing: -0.5px;
-}
-.topbar-heading p {
-  margin-top: 4px;
-  font-size: 13px;
-  line-height: 1.6;
+  height: 48px;
 }
 .topbar-actions {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-inline-start: auto;
 }
 .topbar-actions:empty {
   display: none;
@@ -241,16 +229,6 @@ const slots = useSlots();
   padding-top: 16px;
 }
 @media (max-width: 700px) {
-  .topbar {
-    height: 82px;
-    gap: 10px;
-  }
-  .topbar-heading h1 {
-    font-size: 21px;
-  }
-  .topbar-heading p {
-    font-size: 12px;
-  }
   .topbar .top-status {
     display: none;
   }
@@ -259,7 +237,7 @@ const slots = useSlots();
     padding: 8px;
   }
   .content {
-    padding-top: 12px;
+    padding-top: 4px;
   }
 }
 .route-page {
@@ -317,6 +295,30 @@ const slots = useSlots();
   .route-page.settings-layout {
     display: flex;
     overflow: hidden;
+  }
+}
+.detail-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+@media (min-width: 701px) {
+  .topbar.has-detail-toolbar {
+    height: 64px;
+  }
+  .has-detail-toolbar + .content {
+    padding-top: 0;
+  }
+}
+@media (max-width: 700px) {
+  .topbar.has-detail-toolbar {
+    box-sizing: border-box;
+    height: var(--mobile-header-height);
+    padding-inline: var(--mobile-header-icon-inset) 14px;
+  }
+  .has-detail-toolbar > .detail-toolbar {
+    flex: 1;
   }
 }
 </style>

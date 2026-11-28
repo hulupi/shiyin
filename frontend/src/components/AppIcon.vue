@@ -30,6 +30,9 @@ import {
   X,
   Disc3,
   ArrowRight,
+  ChevronLeft,
+  UserRound,
+  EllipsisVertical,
 } from "lucide-vue-next";
 import type { Component } from "vue";
 defineProps<{ name: string; size?: number; spinning?: boolean }>();
@@ -61,6 +64,9 @@ const icons: Record<string, Component> = {
   顺序播放: ListOrdered,
   queue: List,
   refresh: RefreshCw,
+  back: ChevronLeft,
+  artist: UserRound,
+  moreVertical: EllipsisVertical,
   plus: Plus,
   close: X,
   arrow: ArrowRight,

@@ -17,6 +17,7 @@ import { confirmAction } from "../services/dialog";
 import { reportError } from "../services/feedback";
 import { library, refreshLibrary } from "../stores/library";
 import PageLayout from "../components/PageLayout.vue";
+import CatalogDetailToolbar from "../components/CatalogDetailToolbar.vue";
 import SongTable from "../components/SongTable.vue";
 import PlaylistCard from "../components/PlaylistCard.vue";
 import PlaylistCover from "../components/PlaylistCover.vue";
@@ -42,6 +43,8 @@ interface Playlist {
 }
 const playlists = ref<Playlist[]>([]),
   name = ref(""),
+  createOpen = ref(false),
+  nameInput = ref<{ focus: () => void }>(),
   tracks = ref<Track[]>([]),
   detail = ref<Playlist>(),
   busy = ref(false),
@@ -103,6 +106,10 @@ async function open(id: string) {
     if (controller === active) detailLoading.value = false;
   }
 }
+function openCreate() {
+  name.value = "";
+  createOpen.value = true;
+}
 async function create() {
   if (!name.value.trim() || busy.value) return;
   busy.value = true;
@@ -111,7 +118,7 @@ async function create() {
       method: "POST",
       body: JSON.stringify({ name: name.value.trim() }),
     });
-    name.value = "";
+    createOpen.value = false;
     await load();
   } catch (error) {
     reportError(error);
@@ -229,28 +236,52 @@ onDeactivated(() => controller?.abort());
 onUnmounted(() => controller?.abort());
 </script>
 <template>
-  <PageLayout title="我的歌单" description="把喜欢的音乐整理在一起。" floating>
+  <PageLayout title="我的歌单" floating>
+    <template v-if="selected" #detail-toolbar>
+      <CatalogDetailToolbar
+        :loading="detailLoading"
+        back-label="返回我的歌单"
+        @back="navigate('我的歌单')"
+        @refresh="open(selected)"
+      />
+    </template>
     <div class="playlists-page">
       <template v-if="!selected">
         <div class="directory-toolbar">
-          <span class="playlist-total">{{ playlists.length }} 张歌单</span>
+          <el-button type="primary" class="primary new-playlist" @click="openCreate">
+            <AppIcon name="plus" :size="16" />新建歌单
+          </el-button>
+        </div>
+        <el-dialog
+          v-model="createOpen"
+          title="新建歌单"
+          width="min(420px, 92vw)"
+          append-to-body
+          :close-on-click-modal="!busy"
+          :close-on-press-escape="!busy"
+          :show-close="!busy"
+          @opened="nameInput?.focus()"
+        >
           <el-form class="playlist-create" @submit.prevent="create">
             <el-input
+              ref="nameInput"
               v-model="name"
+              :disabled="busy"
               maxlength="80"
               placeholder="输入新歌单名称"
               aria-label="新歌单名称"
             />
-            <el-button
-              type="primary"
-              class="primary"
-              :loading="busy"
-              :disabled="busy || !name.trim()"
-              native-type="submit"
-              ><AppIcon name="plus" :size="16" />新建歌单</el-button
-            >
+            <div class="playlist-create-actions">
+              <el-button :disabled="busy" @click="createOpen = false">取消</el-button>
+              <el-button
+                type="primary"
+                :loading="busy"
+                :disabled="busy || !name.trim()"
+                native-type="submit"
+              >创建</el-button>
+            </div>
           </el-form>
-        </div>
+        </el-dialog>
         <div v-if="directoryError" class="page-state" role="alert">
           <p>{{ directoryError }}</p>
           <el-button @click="load">重试</el-button>
@@ -282,14 +313,20 @@ onUnmounted(() => controller?.abort());
       </template>
       <template v-else>
         <div class="detail-toolbar">
+          <PlaylistCover class="detail-cover" :track="detailCover" :empty="detail?.count === 0" />
           <div class="detail-summary">
-            <h2>{{ detail?.name || "歌单" }}</h2>
+            <h2 :title="detail?.name">{{ detail?.name || "歌单" }}</h2>
             <p>{{ detail?.count || 0 }} 首歌曲</p>
+            <el-button
+              class="primary detail-play-all"
+              type="primary"
+              :disabled="!tracks.length || detailLoading"
+              @click="emit('play', tracks[0], tracks)"
+            ><AppIcon name="play" :size="14" />播放全部</el-button>
           </div>
         </div>
         <SongTable
           batch
-          searchable
           :key="selected"
           :tracks="tracks"
           :loading="detailLoading"
@@ -306,18 +343,6 @@ onUnmounted(() => controller?.abort());
           @notify="emit('notify', $event)"
           @navigate="emit('navigate', $event)"
         >
-          <template #actions>
-            <el-button class="secondary" @click="navigate('我的歌单')"
-              >← 全部歌单</el-button
-            >
-            <el-button
-              class="primary"
-              type="primary"
-              :disabled="!tracks.length || detailLoading"
-              @click="emit('play', tracks[0], tracks)"
-              ><AppIcon name="play" :size="16" />播放全部</el-button
-            >
-          </template>
           <template #empty>
             <div v-if="detailError" class="page-state" role="alert">
               <p>{{ detailError }}</p>
@@ -361,23 +386,36 @@ onUnmounted(() => controller?.abort());
 .directory-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 20px;
   margin: 0 var(--list-right-inset) 26px 0;
   flex-shrink: 0;
 }
-.playlist-total {
-  color: var(--day-muted, #93ab9c);
-  font-size: 14px;
-  white-space: nowrap;
+.directory-toolbar .new-playlist {
+  min-height: 32px;
+  height: 32px;
+  padding-block: 0;
 }
-.playlist-create {
+.playlist-create-actions {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  :deep(.el-input) {
-    width: 240px;
-  }
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.playlist-create-actions > :deep(.el-button) {
+  box-sizing: border-box;
+  height: 32px;
+  min-height: 32px;
+  min-width: 64px;
+  margin: 0;
+  padding-block: 0;
+}
+.playlist-create :deep(.el-input__wrapper) {
+  box-sizing: border-box;
+  height: 32px;
+  min-height: 32px;
+  padding-block: 0;
+}
+.playlist-create :deep(.el-input__inner) {
+  height: 30px;
 }
 .primary {
   min-height: 38px;
@@ -411,24 +449,39 @@ onUnmounted(() => controller?.abort());
 .detail-toolbar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 18px;
   flex-shrink: 0;
-  margin: 0 var(--list-right-inset) 22px 0;
+  margin: 0 var(--list-right-inset) 8px 0;
+}
+.detail-cover {
+  flex: 0 0 108px;
+  width: 108px;
 }
 .detail-summary {
   min-width: 0;
   flex: 1;
   h2 {
-    font-size: 20px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-size: 24px;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
   }
   p {
     font-size: 13px;
     margin-top: 4px;
     color: var(--day-muted, #8fa797);
   }
+}
+.detail-summary .detail-play-all.el-button {
+  width: 104px;
+  height: 30px;
+  min-height: 30px;
+  margin-top: 12px;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 13px;
+}
+.detail-play-all :deep(span) {
+  gap: 5px;
 }
 .page-state {
   display: flex;
@@ -496,35 +549,46 @@ onUnmounted(() => controller?.abort());
 }
 @media (max-width: 700px) {
   .directory-toolbar {
-    flex-wrap: wrap;
-    gap: 14px;
     margin-bottom: 20px;
-  }
-  .playlist-create {
-    flex: 1 1 100%;
-    :deep(.el-input) {
-      flex: 1;
-      width: 0;
-      min-width: 0;
-    }
-    .primary {
-      padding-inline: 10px;
-    }
   }
   .playlist-grid {
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 130px), 1fr));
     gap: 22px 14px;
   }
   .detail-toolbar {
-    flex-wrap: wrap;
-    gap: 10px;
+    gap: 12px;
+  }
+  .detail-cover {
+    flex-basis: 84px;
+    width: 84px;
   }
   .detail-summary {
-    flex-basis: calc(100% - 125px);
-    h2 {
-      font-size: 18px;
-    }
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    flex: 1;
+    min-width: 0;
+    min-height: 84px;
   }
+  .detail-summary h2 {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin: 0;
+    font-size: 15px;
+    line-height: 17px;
+  }
+  .detail-summary p {
+    max-width: 100%;
+    overflow: hidden;
+    margin: 3px 0 0;
+    font-size: 12px;
+    line-height: 15px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .detail-summary .detail-play-all { margin-top: auto; }
   .empty-playlist {
     min-height: 300px;
     margin-bottom: calc(var(--player-height) + 16px);

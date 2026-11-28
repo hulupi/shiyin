@@ -57,19 +57,26 @@ const emit = defineEmits<{
 }>();
 const query = ref("");
 const selectedIds = ref<string[]>([]);
-const selectedTracks = computed(() => availableTracks.value.filter(track => selectedIds.value.includes(track.id)));
+const selecting = ref(false);
+function toggleSelection() {
+  selecting.value = !selecting.value;
+  if (!selecting.value) selectedIds.value = [];
+}
+const selectedTracks = computed(() =>
+  availableTracks.value.filter((track) => selectedIds.value.includes(track.id)),
+);
 const albumOpen = ref(false);
 const albumLoading = ref(false);
 const albumTitle = ref("");
 const albumError = ref("");
 const albumTracks = ref<Track[]>([]);
 let albumRequest: AbortController | undefined;
-function closeAlbum(){
+function closeAlbum() {
   albumRequest?.abort();
   albumRequest = undefined;
 }
 onUnmounted(closeAlbum);
-async function openAlbum(track: Track){
+async function openAlbum(track: Track) {
   closeAlbum();
   const request = new AbortController();
   albumRequest = request;
@@ -78,13 +85,18 @@ async function openAlbum(track: Track){
   albumTitle.value = track.album;
   albumError.value = "";
   albumTracks.value = [];
-  try{
-    const data = await api("/catalog/track-album/"+encodeURIComponent(track.id), {signal:request.signal});
-    if(!request.signal.aborted)albumTracks.value = data.tracks;
-  }catch(error){
-    if(!request.signal.aborted)albumError.value = error instanceof Error ? error.message : "无法打开专辑";
-  }finally{
-    if(!request.signal.aborted)albumLoading.value = false;
+  try {
+    const data = await api(
+      "/catalog/track-album/" + encodeURIComponent(track.id),
+      { signal: request.signal },
+    );
+    if (!request.signal.aborted) albumTracks.value = data.tracks;
+  } catch (error) {
+    if (!request.signal.aborted)
+      albumError.value =
+        error instanceof Error ? error.message : "无法打开专辑";
+  } finally {
+    if (!request.signal.aborted) albumLoading.value = false;
   }
 }
 const deletedIds = ref<string[]>([]);
@@ -106,8 +118,10 @@ const filteredSelectedCount = computed(() => {
   const ids = new Set(selectedIds.value);
   return filteredTracks.value.filter((track) => ids.has(track.id)).length;
 });
-const allSelected = computed(() =>
-  filteredTracks.value.length > 0 && filteredSelectedCount.value === filteredTracks.value.length,
+const allSelected = computed(
+  () =>
+    filteredTracks.value.length > 0 &&
+    filteredSelectedCount.value === filteredTracks.value.length,
 );
 function selectAll(checked: boolean) {
   const ids = new Set(selectedIds.value);
@@ -189,6 +203,12 @@ const startIndex = computed(() =>
       : props.rowOffset,
 );
 function playRow(track: Track) {
+  if (selecting.value) {
+    selectedIds.value = selectedIds.value.includes(track.id)
+      ? selectedIds.value.filter((id) => id !== track.id)
+      : [...selectedIds.value, track.id];
+    return;
+  }
   if (!track.available) return;
   emit("play", track, props.tracks);
 }
@@ -207,28 +227,44 @@ function clock(seconds: number) {
     class="track-list song-table"
     :class="{ 'infinite-song-table': infinite }"
   >
-    <div v-if="(batch && tracks.length) || searchable || $slots.actions || $slots.search" class="song-toolbar">
+    <div
+      v-if="
+        searchable ||
+        $slots.actions ||
+        $slots.search
+      "
+      class="song-toolbar"
+    >
       <div class="song-batch-toolbar">
         <slot name="actions" />
-        <template v-if="batch && tracks.length">
-          <span>已选 {{ selectedTracks.length }} 首</span>
-          <BatchTrackActions :tracks="selectedTracks" :remove-favorites="batchRemoveFavorites" :remove-from-playlist="removeFromPlaylist" @done="selectedIds = []" />
-        </template>
       </div>
       <div v-if="searchable || $slots.search" class="song-toolbar-search">
         <slot name="search">
-          <el-input v-model="query" :disabled="!tracks.length" clearable aria-label="搜索当前列表" placeholder="搜索歌曲、歌手、专辑">
+          <el-input
+            v-model="query"
+            :disabled="!tracks.length"
+            clearable
+            aria-label="搜索当前列表"
+            placeholder="搜索歌曲、歌手、专辑"
+          >
             <template #prefix><AppIcon name="搜索" :size="16" /></template>
           </el-input>
         </slot>
       </div>
     </div>
-    <ListSkeleton v-if="loading && !tracks.length" class="song-table-rows" label="正在加载歌曲" />
+    <ListSkeleton
+      v-if="loading && !tracks.length"
+      class="song-table-rows"
+      label="正在加载歌曲"
+    />
     <slot v-else-if="!tracks.length && $slots.empty" name="empty" />
     <template v-else>
-      <div class="table-header online-track-row" :class="{ 'selection-header': batch }">
+      <div
+        class="table-header online-track-row"
+        :class="{ 'selection-header': batch }"
+      >
         <el-checkbox
-          v-if="batch"
+          v-if="selecting"
           class="track-selection"
           :model-value="allSelected"
           :indeterminate="filteredSelectedCount > 0 && !allSelected"
@@ -237,14 +273,48 @@ function clock(seconds: number) {
           @change="selectAll($event === true)"
         />
         <span v-else class="track-number">#</span>
-        <div class="track-info">
-          <span v-if="batch" class="track-number">#</span>
-          <span>歌曲 / 音质</span>
-        </div><span class="album">专辑</span
-        ><span class="audio-spec">格式 / 大小</span
-        ><span class="track-time">时长</span
-        ><span class="track-action-heading">收藏</span
-        ><span class="track-action-heading">更多</span>
+        <div v-if="selecting" class="selection-actions">
+          <span aria-live="polite">已选 {{ selectedTracks.length }} 首</span>
+          <BatchTrackActions
+            :tracks="selectedTracks"
+            :remove-favorites="batchRemoveFavorites"
+            :remove-from-playlist="removeFromPlaylist"
+            @done="selectedIds = []"
+          />
+        </div>
+        <template v-else>
+          <div class="track-info">歌曲 / 音质</div>
+          <span class="album">专辑</span>
+          <span class="audio-spec">格式 / 大小</span>
+          <span class="track-time">时长</span>
+          <span class="track-action-heading">收藏</span>
+          <span v-if="!batch" class="track-action-heading">更多</span>
+        </template>
+        <button
+          v-if="batch"
+          type="button"
+          class="selection-toggle"
+          :disabled="!selecting && !tracks.length"
+          :aria-label="selecting ? '退出多选' : '开启多选'"
+          :title="selecting ? '退出多选' : '开启多选'"
+          @click="toggleSelection"
+        >
+          <AppIcon v-if="selecting" name="check" :size="17" />
+          <svg
+            v-else
+            width="18"
+            height="18"
+            viewBox="0 0 18 18"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="m1.5 3.5 1.25 1.25L5 2.5M7.5 3.5h9m-15 5.5 1.25 1.25L5 8m2.5 1h9m-15 5.5 1.25 1.25L5 13.5m2.5 1h9" />
+          </svg>
+        </button>
       </div>
       <div
         ref="rows"
@@ -260,11 +330,12 @@ function clock(seconds: number) {
           :class="{
             selected: currentId === track.id,
             unavailable: !track.available,
+            'track-row-checked': selecting && selectedIds.includes(track.id),
           }"
           @click="$event.detail <= 1 && playRow(track)"
         >
           <el-checkbox
-            v-if="batch"
+            v-if="selecting"
             v-model="selectedIds"
             class="track-selection"
             :value="track.id"
@@ -273,17 +344,18 @@ function clock(seconds: number) {
           />
           <span v-else class="track-number">{{ startIndex + index + 1 }}</span>
           <div class="track-info">
-            <span v-if="batch" class="track-number">{{ startIndex + index + 1 }}</span>
             <TrackCover
               :track="track"
-              :playback="track.available"
-              :playable="track.available"
+              :playback="track.available && !selecting"
+              :playable="track.available && !selecting"
               :playing="currentId === track.id && playing"
               @play="playRow(track)"
             />
             <div class="track-copy">
               <div class="track-heading">
-                <span class="track-title" :title="track.title">{{ track.title }}</span
+                <span class="track-title" :title="track.title">{{
+                  track.title
+                }}</span
                 ><span v-if="preferredVariant(track)" class="quality-badge">{{
                   variantQualityName(preferredVariant(track))
                 }}</span>
@@ -300,29 +372,54 @@ function clock(seconds: number) {
                         ? "本地"
                         : "文件失效"
                   }}</span
-                ><span v-if="track.hasLyrics" class="lyric-badge">词</span></small
+                ></small
               >
-              <button v-if="!disableAlbumLinks && track.album?.trim() && track.album !== '未知专辑'"
-                type="button" class="album-link album-link-compact" :title="track.album" @click.stop="openAlbum(track)" @dblclick.stop
-              >{{ track.album }}</button>
+              <button
+                v-if="
+                  !disableAlbumLinks &&
+                  track.album?.trim() &&
+                  track.album !== '未知专辑'
+                "
+                type="button"
+                class="album-link album-link-compact"
+                :title="track.album"
+                @click.stop="openAlbum(track)"
+                @dblclick.stop
+              >
+                {{ track.album }}
+              </button>
             </div>
           </div>
 
-          <button v-if="!disableAlbumLinks && track.album?.trim() && track.album !== '未知专辑'"
-            type="button" class="album album-link" :title="track.album" @click.stop="openAlbum(track)" @dblclick.stop
-          >{{ track.album }}</button>
-          <span v-else class="album" :title="track.album">{{ track.album }}</span>
+          <button
+            v-if="
+              !disableAlbumLinks &&
+              track.album?.trim() &&
+              track.album !== '未知专辑'
+            "
+            type="button"
+            class="album album-link"
+            :title="track.album"
+            @click.stop="openAlbum(track)"
+            @dblclick.stop
+          >
+            {{ track.album }}
+          </button>
+          <span v-else class="album" :title="track.album">{{
+            track.album
+          }}</span>
           <div
             class="audio-spec"
             :title="
               track.audioVariants
-                ?.map(
-                  (v) =>
-                    [
-                      variantQualityName(v),
-                      v.quality === 'local' ? '' : v.format,
-                      fileSize(v.size),
-                    ].filter(Boolean).join(' · '),
+                ?.map((v) =>
+                  [
+                    variantQualityName(v),
+                    v.quality === 'local' ? '' : v.format,
+                    fileSize(v.size),
+                  ]
+                    .filter(Boolean)
+                    .join(' · '),
                 )
                 .join('\n')
             "
@@ -356,11 +453,19 @@ function clock(seconds: number) {
             @navigate="emit('navigate', $event)"
           />
         </div>
-        <div v-if="query.trim() && !filteredTracks.length" class="scroll-load-status" role="status">
+        <div
+          v-if="query.trim() && !filteredTracks.length"
+          class="scroll-load-status"
+          role="status"
+        >
           没有找到匹配的歌曲
         </div>
         <ListSkeleton v-if="loadingMore" :count="2" label="正在加载更多歌曲" />
-        <div v-else-if="infinite && loadError" class="scroll-load-status" role="status">
+        <div
+          v-else-if="infinite && loadError"
+          class="scroll-load-status"
+          role="status"
+        >
           <span>{{ loadError }}</span>
           <el-button @click="emit('load-more')" text>重试</el-button>
         </div>
@@ -374,22 +479,41 @@ function clock(seconds: number) {
       />
     </template>
   </div>
-  <el-dialog v-if="!disableAlbumLinks" v-model="albumOpen" :title="albumTitle"
-    width="min(960px, 94vw)" append-to-body destroy-on-close @close="closeAlbum">
+  <el-dialog
+    v-if="!disableAlbumLinks"
+    v-model="albumOpen"
+    :title="albumTitle"
+    width="min(960px, 94vw)"
+    append-to-body
+    destroy-on-close
+    @close="closeAlbum"
+  >
     <ListSkeleton v-if="albumLoading" label="正在读取专辑曲目" />
     <p v-else-if="albumError" role="alert">{{ albumError }}</p>
     <p v-else-if="!albumTracks.length">这张专辑暂无曲目</p>
     <div v-else class="album-dialog-content">
       <div class="song-batch-toolbar">
-        <el-button type="primary" @click="emit('play', albumTracks[0], albumTracks)">播放全部</el-button>
+        <el-button
+          type="primary"
+          @click="emit('play', albumTracks[0], albumTracks)"
+          >播放全部</el-button
+        >
         <ImportPlaylistButton :name="albumTitle" :tracks="albumTracks" />
         <BatchTrackActions :tracks="albumTracks" whole-album />
       </div>
-      <SongTable :tracks="albumTracks" :current-id="currentId" :playing="playing"
-        :favorite-ids="favoriteIds" disable-album-links :paginate="false"
-        @play="(track,list)=>emit('play',track,list)" @favorite="emit('favorite',$event)"
-        @enqueue="(track,next)=>emit('enqueue',track,next)" @notify="emit('notify',$event)"
-        @navigate="emit('navigate',$event)" />
+      <SongTable
+        :tracks="albumTracks"
+        :current-id="currentId"
+        :playing="playing"
+        :favorite-ids="favoriteIds"
+        disable-album-links
+        :paginate="false"
+        @play="(track, list) => emit('play', track, list)"
+        @favorite="emit('favorite', $event)"
+        @enqueue="(track, next) => emit('enqueue', track, next)"
+        @notify="emit('notify', $event)"
+        @navigate="emit('navigate', $event)"
+      />
     </div>
   </el-dialog>
 </template>
@@ -424,7 +548,7 @@ function clock(seconds: number) {
 }
 
 .track-row.selected {
-  background: var(--day-surface-soft, #1c2e22);
+  // background: var(--day-surface-soft, #1c2e22);
 }
 
 .track-row.selected .track-title,
@@ -461,7 +585,7 @@ function clock(seconds: number) {
 .track-info small {
   display: block;
   color: var(--day-muted, #74877c);
-  font-size: 12px;
+  font-size: 11px;
   margin-top: 6px;
   white-space: nowrap;
   overflow: hidden;
@@ -539,11 +663,6 @@ function clock(seconds: number) {
     display: none;
   }
 
-  .table-header,
-  .track-row {
-    padding-inline: 10px;
-  }
-
   .track-row {
     grid-template-columns: 20px minmax(90px, 1fr) 25px;
     gap: 7px;
@@ -570,7 +689,7 @@ function clock(seconds: number) {
   }
 
   .track-info small {
-    font-size: 12px;
+    font-size: 11px;
   }
 }
 .online-track-row {
@@ -610,7 +729,7 @@ function clock(seconds: number) {
 .platform-badge {
   display: inline-block;
   margin-left: 7px;
-  padding: 1px 5px;
+  padding: 0px 5px;
   border-radius: 3px;
   color: var(--day-muted, #a8b4e1);
   background: var(--day-surface-soft, #262c40);
@@ -778,9 +897,9 @@ function clock(seconds: number) {
   color: var(--day-text, #dcebe1);
 }
 .song-table .table-header {
-  min-height: 42px;
-  height: auto;
-  padding-block: 10px;
+  box-sizing: border-box;
+  height: 46px;
+  padding-block: 0;
   font-size: 13px;
   color: var(--day-muted, #a4b5aa);
 }
@@ -789,9 +908,7 @@ function clock(seconds: number) {
   padding-block: 4px;
   border-radius: var(--song-row-radius);
 }
-.song-table .track-row + .track-row {
-  margin-top: var(--song-row-gap);
-}
+
 .song-table .track-info small {
   margin-top: 2px;
 }
@@ -801,7 +918,7 @@ function clock(seconds: number) {
   font-weight: 500;
 }
 .track-info small {
-  font-size: 14px;
+  font-size: 11px;
   line-height: 1.5;
   margin-top: 4px;
   color: var(--day-muted, #a2b3a8);
@@ -856,10 +973,10 @@ function clock(seconds: number) {
   text-align: center;
   font-size: 12px;
 }
-.song-table .track-row.selected {
-  background: var(--song-row-highlight);
-  box-shadow: inset 3px 0 #62e393;
-}
+// .song-table .track-row.selected {
+//   background: var(--song-row-highlight);
+//   box-shadow: inset 3px 0 #62e393;
+// }
 .song-table .track-row.selected .track-title {
   color: var(--day-accent-text, #8bf1ae);
 }
@@ -890,17 +1007,23 @@ function clock(seconds: number) {
   }
 }
 @media (max-width: 700px) {
+  .song-table .table-header,
+  .song-table .track-row {
+    padding: 0 8px;
+  }
   .song-table .online-track-row {
     grid-template-columns: 19px minmax(0, 1fr) 30px 30px;
     gap: 5px;
   }
 }
-.song-table .track-row:not(.unavailable) { cursor: pointer; }
+.song-table .track-row:not(.unavailable) {
+  cursor: pointer;
+}
 .song-table .track-row {
   transition: background-color 0.15s;
 }
 @media (hover: hover) and (pointer: fine) {
-  .song-table .track-row:not(.selected):hover {
+  .song-table .track-row:hover {
     background: var(--song-row-highlight);
   }
   .song-table .track-row:not(.selected):hover .track-number,
@@ -925,17 +1048,94 @@ function clock(seconds: number) {
   font-variant-numeric: tabular-nums;
 }
 
-.track-selection {
+.track-selection.el-checkbox {
+  display: grid;
+  place-items: center;
   justify-self: center;
+  width: 24px;
+  height: 28px;
   margin: 0;
+  padding: 0;
+}
+.track-selection :deep(.el-checkbox__label) {
+  display: none;
 }
 
-.track-info > .track-number {
-  flex: 0 0 3ch;
+.selection-actions {
+  grid-column: 2 / -2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 10px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
-
-.table-header .track-info > .track-number {
-  text-align: center;
+.selection-actions > span {
+  white-space: nowrap;
+}
+.selection-actions :deep(.batch-track-actions) {
+  flex: none;
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+.selection-actions :deep(.batch-track-actions > .el-button) {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.selection-toggle {
+  grid-column: -2 / -1;
+  justify-self: center;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.selection-toggle:hover:not(:disabled) {
+  background: var(--day-surface-soft, #26332b);
+  color: var(--day-text, #dcebe1);
+}
+.selection-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+@media (max-width: 700px) {
+  .song-table .track-row {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .song-table .online-track-row > .track-number {
+    display: none;
+  }
+  .song-table .track-row,
+  .song-table .table-header:not(:has(> .track-selection)) {
+    grid-template-columns: minmax(0, 1fr) 30px 30px;
+  }
+  .song-table .track-row > .track-selection {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .song-table .track-row.track-row-checked :deep(.cover) {
+    outline: 1px solid var(--green);
+  }
+  .song-table .track-row:has(> .track-selection :focus-visible) {
+    outline: 2px solid var(--green);
+    outline-offset: -2px;
+  }
+  .selection-header .track-action-heading {
+    display: none;
+  }
 }
 
 .scroll-load-status {
@@ -947,8 +1147,16 @@ function clock(seconds: number) {
   color: var(--day-muted, #8eaa98);
   font-size: 13px;
 }
-.song-batch-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-block: 8px; }
-.song-batch-toolbar > :deep(.el-button) { margin: 0; }
+.song-batch-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-block: 8px;
+}
+.song-batch-toolbar > :deep(.el-button) {
+  margin: 0;
+}
 .song-toolbar {
   display: flex;
   align-items: center;
@@ -956,7 +1164,10 @@ function clock(seconds: number) {
   gap: 8px 16px;
   padding-block: 8px;
 }
-.song-toolbar .song-batch-toolbar { min-width: 0; padding: 0; }
+.song-toolbar .song-batch-toolbar {
+  min-width: 0;
+  padding: 0;
+}
 .song-toolbar .song-batch-toolbar > :deep(.el-button),
 .song-toolbar .song-batch-toolbar :deep(.batch-track-actions > .el-button) {
   height: 32px;
@@ -985,19 +1196,56 @@ function clock(seconds: number) {
   margin-inline-start: auto;
 }
 @container (max-width: 540px) {
-  .song-toolbar { flex-wrap: wrap; }
-  .song-toolbar-search { min-width: min(150px, 100%); }
+  .song-toolbar {
+    flex-wrap: wrap;
+  }
+  .song-toolbar-search {
+    min-width: min(150px, 100%);
+  }
 }
-.album-link { text-align: left; background: none; border: 0; padding: 0; cursor: pointer; }
-.album-link:hover, .album-link:focus-visible { color: var(--green); text-decoration: underline; }
-.album-dialog-content { display: flex; flex-direction: column; max-height: 65vh; min-height: 0; }
-.album-dialog-content > .song-table { min-height: 0; }
-.album-link-compact { display: none; }
+.album-link {
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.album-link:hover,
+.album-link:focus-visible {
+  color: var(--green);
+  text-decoration: underline;
+}
+.album-dialog-content {
+  display: flex;
+  flex-direction: column;
+  max-height: 65vh;
+  min-height: 0;
+}
+.album-dialog-content > .song-table {
+  min-height: 0;
+}
+.album-link-compact {
+  display: none;
+}
 @container (max-width: 540px) {
-  .album-link-compact { display: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  .album-link-compact {
+    display: none;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
+  }
 }
 @media (max-width: 700px) {
-  .album-link-compact { display: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+  .album-link-compact {
+    display: none;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
+  }
 }
 @media (max-width: 700px) {
   .song-toolbar {
@@ -1012,4 +1260,3 @@ function clock(seconds: number) {
   }
 }
 </style>
-

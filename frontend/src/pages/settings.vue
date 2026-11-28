@@ -33,12 +33,33 @@ const sections = ([
   { id: "about", label: "关于" },
 ] as const).filter(section => !isAndroidOnline || !["directories", "downloads", "backup", "about", "logs"].includes(section.id));
 const detail = ref<HTMLElement>();
+const navigation = ref<HTMLElement>();
+const indicatorCenter = ref<number>();
 const activeSection = computed(() =>
   sections.find(section => section.id === route.value.query.section)?.id ?? sections[0].id,
 );
+function positionActiveSection() {
+  const nav = navigation.value;
+  const active = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+  if (!nav || !active || !nav.clientWidth || route.value.page !== "设置") return;
+
+  indicatorCenter.value = active.offsetLeft + active.offsetWidth / 2;
+  nav.scrollTo({ left: indicatorCenter.value - nav.clientWidth / 2 });
+}
+
 watch(activeSection, () => {
   if (route.value.page !== "设置") return;
   detail.value?.scrollTo({ top: 0 });
+}, { flush: "post" });
+
+watch([activeSection, () => route.value.page], positionActiveSection, { flush: "post" });
+watch(navigation, (nav, _, onCleanup) => {
+  if (!nav) return;
+  positionActiveSection();
+  const observer = new ResizeObserver(positionActiveSection);
+  observer.observe(nav);
+  nav.querySelectorAll("a").forEach(link => observer.observe(link));
+  onCleanup(() => observer.disconnect());
 }, { flush: "post" });
 
 const savedDirectory = computed(() => library.value.directories[0]);
@@ -176,22 +197,27 @@ const musicDirectoryPlaceholder = chooseDirectory
 </script>
 <template>
   <PageLayout
-    title="间设置"
-    description=""
+    title="设置"
     settings
   >
     <div class="settings-workspace">
-      <aside class="settings-sidebar">
+      <header class="settings-header">
         <h1>设置</h1>
-        <nav class="settings-nav" aria-label="设置分类">
+        <nav ref="navigation" class="settings-nav" aria-label="设置分类">
           <a
             v-for="section in sections"
             :key="section.id"
             :href="'#/settings?section=' + section.id"
             :aria-current="activeSection === section.id ? 'page' : undefined"
           >{{ section.label }}</a>
+          <span
+            v-if="indicatorCenter !== undefined"
+            class="settings-nav-indicator"
+            :style="{ transform: 'translateX(' + indicatorCenter + 'px) translateX(-50%)' }"
+            aria-hidden="true"
+          />
         </nav>
-      </aside>
+      </header>
       <div ref="detail" class="settings-detail" tabindex="0" role="region" aria-label="当前设置">
         <section v-show="activeSection === 'appearance'" class="settings-panel">
           <div class="section-heading">
@@ -518,53 +544,69 @@ const musicDirectoryPlaceholder = chooseDirectory
 .settings-workspace {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(160px, 210px) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
-.settings-sidebar {
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--day-scrollbar, #34513e) transparent;
+.settings-header {
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
 }
-.settings-sidebar h1 {
-  margin: 6px 0 4px;
-  font-size: 22px;
-}
-.settings-sidebar p {
-  margin: 0 0 20px;
-  color: var(--muted);
-  font-size: 13px;
+.settings-header h1 {
+  margin: 6px 0 8px;
+  font-size: 24px;
 }
 .settings-nav {
-  margin-top:12px;
-  display: grid;
-  gap: 4px;
+  position: relative;
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
+}
+.settings-nav::-webkit-scrollbar {
+  display: none;
 }
 .settings-nav > a {
-  display: block;
-  padding: 10px 13px;
-  border-inline-start: 2px solid transparent;
-  border-radius: 7px;
-  color: var(--day-muted, #a8b9ae);
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-.settings-nav > a:hover {
-  background: var(--day-surface-soft, #203128);
+  transition: color 180ms ease;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: 44px;
   color: var(--day-text, #e2eae5);
+  font-size: 14px;
+  text-decoration: none;
+  white-space: nowrap;
 }
+.settings-nav > a:hover,
 .settings-nav > a[aria-current="page"] {
-  border-inline-start-color: var(--green);
-  background: var(--day-selected, #203d2d);
-  color: var(--day-accent-text, #83e8a8);
+  color: var(--day-accent-text, var(--green));
+}
+.settings-nav-indicator {
+  position: absolute;
+  left: 0;
+  pointer-events: none;
+  transition: transform 260ms ease;
+  bottom: 0;
+  width: 24px;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--green);
 }
 .settings-nav > a:focus-visible {
   outline: 2px solid var(--green);
   outline-offset: -2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-nav {
+    scroll-behavior: auto;
+  }
+  .settings-nav > a,
+  .settings-nav-indicator {
+    transition: none;
+  }
 }
 .settings-detail {
   min-width: 0;
@@ -574,10 +616,7 @@ const musicDirectoryPlaceholder = chooseDirectory
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--day-scrollbar, #34513e) transparent;
-  padding: 24px 28px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--day-surface-soft, #151c17);
+  padding: 24px 0;
 }
 .settings-detail > :deep(.source-manager) {
   padding: 0;
@@ -688,35 +727,14 @@ const musicDirectoryPlaceholder = chooseDirectory
 }
 
 @media (max-width: 700px) {
-  .settings-workspace {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-    gap: 12px;
-  }
-  .settings-sidebar {
-    overflow: visible;
-  }
-  .settings-sidebar h1 {
-    margin-top: 0;
-    font-size: 20px;
-  }
-  .settings-sidebar p {
-    margin-bottom: 10px;
+  .settings-header h1 {
+    display: none;
   }
   .settings-nav {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 4px;
-  }
-  .settings-nav > a {
-    display: grid;
-    place-items: center start;
-    text-align: start;
-    padding: 8px 10px;
-    font-size: 12px;
+    gap: 16px;
   }
   .settings-detail {
-    min-height: 0;
-    padding: 15px;
+    padding: 16px 0;
   }
 
   .section-heading {

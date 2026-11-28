@@ -15,6 +15,7 @@ const menus = [
   "我的歌单",
   "下载管理",
   "播放历史",
+  "设置",
 ].filter(name => !isAndroidOnline || !["首页", "本地音乐", "下载管理"].includes(name));
 </script>
 <template>
@@ -38,16 +39,6 @@ const menus = [
         }}</i></el-button
       >
     </nav>
-    <div class="sidebar-bottom">
-      <el-button
-        :class="{ active: page === '设置' }"
-        title="设置"
-        @click="page = '设置'; emit('navigate')"
-        ><AppIcon class="nav-icon" name="设置" /><span class="nav-name"
-          >设置</span
-        ></el-button
-      >
-    </div>
   </aside>
 </template>
 
@@ -116,12 +107,6 @@ nav {
   margin-left: auto;
   font-size: 12px;
   font-style: normal;
-}
-
-.sidebar-bottom {
-  margin-top: auto;
-  padding-top: 10px;
-  border-top: 1px solid var(--day-line, #202423);
 }
 
 .sidebar.mobile-drawer {

@@ -99,6 +99,20 @@ const menuEntries = computed(() => [
       )[entry.id] || "music",
   })),
 ]);
+const sheetOpen = ref(false);
+const sheetMounted = ref(false);
+const sheetEntries = computed(() =>
+  menuEntries.value.filter(entry => entry.id !== "favorite" && entry.id !== "details")
+    .sort((first, second) => Number(second.id === "download") - Number(first.id === "download")),
+);
+function openSheet() {
+  sheetMounted.value = true;
+  sheetOpen.value = true;
+}
+function chooseFromSheet(action: string) {
+  sheetOpen.value = false;
+  void choose(action);
+}
 const panelOpen = computed({
   get: () => Boolean(panel.value),
   set: (value: boolean) => {
@@ -242,7 +256,7 @@ async function download() {
 }
 </script>
 <template>
-  <el-dropdown trigger="click" placement="bottom-end" @command="choose"
+  <el-dropdown class="track-actions-desktop" trigger="click" placement="bottom-end" @command="choose"
     ><el-button
       text
       class="icon-button more-button"
@@ -256,7 +270,7 @@ async function download() {
           v-for="entry in menuEntries"
           :key="entry.id"
           :command="entry.id"
-          :disabled="'disabled' in entry && entry.disabled"
+          :disabled="'disabled' in entry && entry.disabled === true"
           ><AppIcon :name="entry.icon" :size="16" />{{
             entry.id === "favorite" && favorite ? "取消收藏" : entry.name
           }}</el-dropdown-item
@@ -264,6 +278,61 @@ async function download() {
       ></template
     ></el-dropdown
   >
+  <el-button
+    text
+    class="icon-button more-button track-actions-mobile"
+    aria-label="更多操作"
+    aria-haspopup="dialog"
+    :aria-expanded="sheetOpen"
+    @click.stop="openSheet"
+    @dblclick.stop
+  ><AppIcon name="moreVertical" :size="19" /></el-button>
+  <el-drawer
+    v-if="sheetMounted"
+    v-model="sheetOpen"
+    class="track-action-sheet"
+    direction="btt"
+    size="auto"
+    title="歌曲操作"
+    append-to-body
+    destroy-on-close
+    :with-header="false"
+  >
+    <div class="track-sheet-summary">
+      <TrackCover :track="track" />
+      <div class="track-sheet-copy">
+        <strong>{{ track.title }}</strong>
+        <span>{{ track.artist }}</span>
+      </div>
+      <button
+        type="button"
+        class="track-sheet-favorite"
+        :aria-label="favorite ? '取消收藏' : '收藏'"
+        :aria-pressed="favorite"
+        @click="choose('favorite')"
+      ><AppIcon name="heart" :size="20" :fill="favorite ? 'currentColor' : 'none'" /></button>
+    </div>
+    <div class="track-sheet-actions">
+      <button
+        v-for="entry in sheetEntries"
+        :key="entry.id"
+        type="button"
+        :disabled="'disabled' in entry && entry.disabled === true"
+        @click="chooseFromSheet(entry.id)"
+      >
+        <AppIcon :name="entry.icon" :size="21" />
+        <span>{{ entry.name }}</span>
+      </button>
+      <div v-if="track.artist" class="track-sheet-metadata">
+        <AppIcon name="artist" :size="21" />
+        <span>歌手：{{ track.artist }}</span>
+      </div>
+      <div v-if="track.album" class="track-sheet-metadata">
+        <AppIcon name="发现歌单" :size="21" />
+        <span>专辑：{{ track.album }}</span>
+      </div>
+    </div>
+  </el-drawer>
   <el-dialog
     v-if="panelOpen"
     v-model="panelOpen"
@@ -368,6 +437,101 @@ async function download() {
 </template>
 
 <style scoped lang="scss">
+.track-actions-mobile.el-button {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  .track-actions-desktop {
+    display: none;
+  }
+
+  .track-actions-mobile.el-button {
+    display: inline-flex;
+  }
+}
+
+:global(.track-action-sheet.el-drawer) {
+  max-height: min(72dvh, 640px);
+  border-radius: 20px 20px 0 0;
+  color: var(--day-text);
+  background: var(--day-surface);
+}
+
+:global(.track-action-sheet .el-drawer__body) {
+  --el-drawer-padding-primary: 0px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0 16px max(16px, env(safe-area-inset-bottom));
+}
+
+.track-sheet-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 0 12px;
+}
+
+.track-sheet-summary :deep(.cover) {
+  width: 50px;
+  height: 50px;
+  border-radius: 8px;
+}
+
+.track-sheet-copy {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+}
+
+.track-sheet-copy > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track-sheet-copy strong { font-size: 16px; }
+.track-sheet-copy span { color: var(--day-muted); font-size: 13px; }
+
+.track-sheet-favorite {
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  height: 44px;
+  border: 1px solid var(--day-line);
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+}
+
+.track-sheet-favorite[aria-pressed="true"] { color: var(--green); }
+
+.track-sheet-actions {
+  display: grid;
+}
+
+.track-sheet-actions button,
+.track-sheet-metadata {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  margin: 0;
+  gap: 14px;
+  min-height: 46px;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+
+.track-sheet-actions button:active { background: var(--day-surface-soft); }
+.track-sheet-actions button:disabled { opacity: 0.45; }
+
 .primary,
 .secondary {
   padding: 11px 18px;

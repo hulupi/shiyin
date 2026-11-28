@@ -35,7 +35,6 @@ const tracks = computed(() => {
   <PageLayout
     floating
     title="我的收藏"
-    description="喜欢的每一首，都收藏在这里"
   >
     <CollectionView
       v-model:query="query"

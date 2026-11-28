@@ -12,6 +12,9 @@ import { isAndroidOnline } from "../services/platform";
 import { loadPlaybackList } from "../services/playbackList";
 import AppIcon from "../components/AppIcon.vue";
 import ChartCard from "../components/ChartCard.vue";
+import CatalogCover from "../components/CatalogCover.vue";
+import CatalogPlatformToolbar from "../components/CatalogPlatformToolbar.vue";
+import CatalogDetailToolbar from "../components/CatalogDetailToolbar.vue";
 import SongTable from "../components/SongTable.vue";
 import { chartPlatforms as platforms, chartPreference, fetchCharts, navigateToChart, type Chart } from "../stores/chartPreferences";
 defineProps<{ currentId?: string; playing: boolean; favoriteIds: string[] }>();
@@ -35,10 +38,13 @@ const platform = ref("wy"),
 const platformName = computed(
   () => platforms.find((item) => item.id === platform.value)?.name,
 );
-const visibleCharts = computed(() => charts.value.filter((chart) => chartPreference(platform.value, chart.id, "visible")));
-const groups = computed(() => [
-  ...new Set(visibleCharts.value.map((chart) => chart.group)),
-]);
+const uncategorizedGroups = new Set(["", "其他", "其它", "未分类", "其他榜", "其它榜", "其他榜单", "其它榜单"]);
+const visibleCharts = computed(() =>
+  charts.value.filter((chart) =>
+    chartPreference(platform.value, chart.id, "visible") &&
+    !uncategorizedGroups.has(chart.group.trim()),
+  ),
+);
 let controller: AbortController | undefined;
 let generation = 0;
 async function loadCharts(refresh = false) {
@@ -82,6 +88,14 @@ async function openChart(chart: Chart, refresh = false) {
   error.value = "";
   loading.value = true;
   loadingMore.value = false;
+  if (!chart.image) {
+    void fetchCharts(platform.value, { signal: active.signal })
+      .then((directory) => {
+        const entry = directory.find((item) => item.id === chart.id);
+        if (controller === active && entry) selected.value = entry;
+      })
+      .catch(() => {});
+  }
   try {
     const data = await api(
       `/charts/${platform.value}/${chart.id}?page=1${refresh ? "&refresh=1" : ""}`,
@@ -216,29 +230,37 @@ onUnmounted(() => {
 });
 </script>
 <template>
-  <PageLayout title="音乐榜单" description="发现各平台的热门与新声" directory>
+  <PageLayout title="音乐榜单" directory>
+    <template v-if="selected" #detail-toolbar>
+      <CatalogDetailToolbar :loading="loading" back-label="返回榜单" @back="goDirectory" @refresh="refresh" />
+    </template>
     <div ref="container" class="charts-page" @scroll.capture="checkScroll">
-      <div v-if="!selected" class="platform-tabs">
-        <div class="music-segmented-scroll">
-          <el-segmented
-            class="music-segmented"
-            :model-value="platform"
-            :options="platforms"
-            :props="{ value: 'id', label: 'name' }"
-            aria-label="榜单平台"
-            @change="selectPlatform"
-          />
-        </div>
-        <RefreshButton class="chart-refresh" :loading="loading" @click="refresh" />
-      </div>
+      <CatalogPlatformToolbar
+        v-if="!selected"
+        class="chart-platform-toolbar"
+        :model-value="platform"
+        :platforms="platforms"
+        :loading="loading"
+        label="榜单平台"
+        @update:model-value="selectPlatform"
+        @refresh="refresh"
+      />
       <template v-if="selected">
         <div class="chart-detail-heading">
+          <CatalogCover class="chart-detail-cover" :name="selected.name" :image="selected.image" />
           <div class="chart-detail-copy">
-            <h2>{{ selected.name }}</h2>
+            <h2 :title="selected.name">{{ selected.name }}</h2>
             <p>
               {{ platformName }}<span v-if="total"> · {{ total }} 首歌曲</span
-              ><span v-if="selected.update"> · {{ selected.update }}</span>
+              ><span v-if="selected.update"> · 更新：{{ selected.update }}</span>
             </p>
+            <el-button
+              class="primary chart-play-all"
+              type="primary"
+              :disabled="!tracks.length"
+              @click="playList(tracks[0], tracks)"
+              ><AppIcon name="play" :size="14" />播放全部</el-button
+            >
           </div>
         </div>
         <el-alert v-if="error" type="error" :closable="false" :title="error"
@@ -246,7 +268,6 @@ onUnmounted(() => {
         >
         <SongTable
           batch
-          searchable
           :key="selected.id"
           :paginate="false"
           :tracks="tracks"
@@ -261,18 +282,6 @@ onUnmounted(() => {
           @notify="emit('notify', $event)"
           @navigate="emit('navigate', $event)"
         >
-          <template #actions>
-            <el-button class="secondary" @click="goDirectory"
-              >← 全部榜单</el-button
-            >
-            <el-button
-              class="primary"
-              type="primary"
-              :disabled="!tracks.length"
-              @click="playList(tracks[0], tracks)"
-              ><AppIcon name="play" :size="15" />播放全部</el-button
-            >
-          </template>
           <template #empty>
             <div class="charts-state">
               <AppIcon name="榜单" :size="32" />
@@ -290,18 +299,15 @@ onUnmounted(() => {
         <RefreshButton v-if="error" label="重新加载" @click="loadCharts(true)" />
       </div>
       <div v-else class="chart-directory">
-        <section v-for="group in groups" :key="group" class="chart-group">
-          <h2>{{ group }}</h2>
-          <div class="chart-grid">
-            <ChartCard
-              v-for="chart in visibleCharts.filter((item) => item.group === group)"
-              :key="platform + ':' + chart.id"
-              :chart="chart"
-              :platform-name="platformName"
-              @open="goChart(chart)"
-            />
-          </div>
-        </section>
+        <div class="chart-grid">
+          <ChartCard
+            v-for="chart in visibleCharts"
+            :key="platform + ':' + chart.id"
+            :chart="chart"
+            :platform-name="platformName"
+            @open="goChart(chart)"
+          />
+        </div>
       </div>
     </div>
   </PageLayout>
@@ -332,11 +338,6 @@ onUnmounted(() => {
   color: var(--day-text, #b8c8be);
 }
 
-.platform-tabs {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 .charts-page {
   display: flex;
   flex-direction: column;
@@ -346,10 +347,6 @@ onUnmounted(() => {
   overflow: hidden;
   position: relative;
 }
-.charts-page > .platform-tabs {
-  flex-shrink: 0;
-  margin-bottom: 24px;
-}
 .chart-directory {
   min-height: 0;
   overflow-y: auto;
@@ -357,14 +354,6 @@ onUnmounted(() => {
   scrollbar-width: thin;
   scrollbar-color: var(--day-scrollbar, #34513e) transparent;
   padding: 0 6px 20px 0;
-}
-.chart-group + .chart-group {
-  margin-top: 26px;
-}
-.chart-group > h2 {
-  font-size: 15px;
-  margin-bottom: 13px;
-  color: var(--day-text, #c5d5ca);
 }
 .chart-grid {
   display: grid;
@@ -375,8 +364,11 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  gap: 16px;
-  margin-bottom: 18px;
+  gap: 18px;
+  margin-bottom: 8px;
+}
+.chart-detail-cover {
+  flex: 0 0 108px;
 }
 .chart-detail-copy {
   min-width: 0;
@@ -385,6 +377,21 @@ onUnmounted(() => {
 .chart-detail-copy p {
   font-size: 13px;
   margin-top: 4px;
+}
+.chart-detail-copy h2 {
+  font-size: 24px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.chart-play-all {
+  height: 30px;
+  margin-top: 12px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+.chart-play-all :deep(span) {
+  gap: 5px;
 }
 .charts-state {
   flex: 1;
@@ -400,7 +407,7 @@ onUnmounted(() => {
 .charts-state p {
   font-size: 14px;
 }
-.charts-page > .platform-tabs,
+.charts-page > .chart-platform-toolbar,
 .chart-detail-heading,
 .charts-page > :deep(.el-alert),
 .charts-page :deep(.song-toolbar),
@@ -416,22 +423,51 @@ onUnmounted(() => {
   padding-bottom: var(--list-bottom-padding);
 }
 @media (max-width: 700px) {
-  .charts-page > .platform-tabs {
-    gap: 6px;
-    margin-bottom: 18px;
-  }
   .chart-grid {
     grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
     gap: 9px;
   }
   .chart-detail-heading {
-    flex-wrap: wrap;
-    gap: 10px;
+    gap: 12px;
+  }
+  .chart-detail-cover {
+    flex-basis: 84px;
   }
   .chart-detail-copy {
-    flex-basis: calc(100% - 120px);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    flex: 1;
+    min-width: 0;
+    min-height: 84px;
   }
-  .charts-page > .platform-tabs,
+  .chart-detail-copy h2 {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin: 0;
+    font-size: 15px;
+    line-height: 17px;
+  }
+  .chart-detail-copy p {
+    max-width: 100%;
+    overflow: hidden;
+    margin: 3px 0 0;
+    font-size: 12px;
+    line-height: 15px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chart-detail-copy .chart-play-all.el-button {
+    box-sizing: border-box;
+    height: 30px;
+    min-height: 30px;
+    margin-top: auto;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+  .charts-page > .chart-platform-toolbar,
   .chart-detail-heading,
   .charts-page > :deep(.el-alert),
   .charts-page :deep(.song-toolbar),
@@ -442,9 +478,6 @@ onUnmounted(() => {
   .chart-directory {
     padding-right: 14px;
   }
-}
-.charts-page > .platform-tabs > .chart-refresh {
-  margin-left: auto;
 }
 
 @media (max-width: 700px) {
@@ -459,21 +492,6 @@ onUnmounted(() => {
     white-space: nowrap;
     color: var(--muted);
   }
-
-  .chart-detail-heading {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 8px;
-  }
-  .chart-detail-heading .chart-detail-copy {
-    grid-column: 1 / -1;
-    grid-row: 1;
-    min-width: 0;
-  }
-  .chart-detail-copy h2 { font-size: 19px; line-height: 1.4; overflow-wrap: anywhere; }
-  .chart-detail-copy p { font-size: 12px; line-height: 1.6; }
 
 }
 </style>

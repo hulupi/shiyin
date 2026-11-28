@@ -26,16 +26,51 @@ import { isAndroidOnline } from "./services/platform";
 import AppSidebar from "./components/AppSidebar.vue";
 import AppIcon from "./components/AppIcon.vue";
 import AppTheme from "./components/AppTheme.vue";
+import { mobileMenuOpen, mobileMenuCoverage } from "./stores/theme";
 import MusicPlayer from "./components/MusicPlayer.vue";
 import { pausePlaybackKey } from "./stores/playbackControl";
 const page = currentPage;
-const mobileMenuOpen = ref(false);
+let menuFrame = 0;
+function sampleMenuCoverage() {
+  const drawer = document.querySelector(".mobile-navigation-drawer");
+  const rect = drawer?.getBoundingClientRect();
+  mobileMenuCoverage.value = rect?.width ? {
+    width: Math.max(0, Math.min(rect.right, rect.width)),
+    fullWidth: rect.width,
+  } : null;
+}
+function stopMenuTracking() {
+  cancelAnimationFrame(menuFrame);
+  menuFrame = 0;
+}
+function trackMenuTransition() {
+  stopMenuTracking();
+  if (!isAndroidOnline) return;
+  function frame() {
+    sampleMenuCoverage();
+    menuFrame = requestAnimationFrame(frame);
+  }
+  menuFrame = requestAnimationFrame(frame);
+}
+function finishMenuTransition() {
+  stopMenuTracking();
+  if (isAndroidOnline && mobileMenuOpen.value) sampleMenuCoverage();
+  else mobileMenuCoverage.value = null;
+}
+onUnmounted(() => {
+  stopMenuTracking();
+  mobileMenuCoverage.value = null;
+});
 if (isAndroidOnline) {
   let subscription: ReturnType<typeof NativeApp.addListener> | undefined;
   let favoritesSubscription: ReturnType<typeof onAndroidFavoritesChanged> | undefined;
   const refreshFavoritesOnResume = () => { if (!document.hidden) void refreshLibrary(); };
   onMounted(() => {
     subscription = NativeApp.addListener("backButton", () => {
+      if (mobileMenuOpen.value) {
+        mobileMenuOpen.value = false;
+        return;
+      }
       if (!backFromAndroidDetail()) void NativeApp.minimizeApp().catch(reportError);
     });
     void subscription.catch(reportError);
@@ -54,6 +89,7 @@ const isMobile = ref(mobileViewport.matches);
 function updateViewport() {
   isMobile.value = mobileViewport.matches;
   mobileMenuOpen.value = false;
+  if (!isMobile.value) finishMenuTransition();
 }
 onMounted(() => mobileViewport.addEventListener("change", updateViewport));
 onUnmounted(() => mobileViewport.removeEventListener("change", updateViewport));
@@ -116,9 +152,12 @@ onUnmounted(() => {
       <button class="menu-toggle" aria-label="打开菜单" :aria-expanded="mobileMenuOpen" aria-controls="mobile-navigation" @click="mobileMenuOpen = true">
         <AppIcon name="menu" :size="22" />
       </button>
-      <AppIcon name="music" :size="24" /><b>拾音</b>
+      <template v-if="page === '首页'">
+        <AppIcon name="music" :size="24" /><b>拾音</b>
+      </template>
+      <b v-else>{{ page }}</b>
     </header>
-    <el-drawer v-if="isMobile" v-model="mobileMenuOpen" direction="ltr" size="min(270px, 80vw)" :with-header="false" class="mobile-navigation-drawer" aria-label="导航菜单">
+    <el-drawer v-if="isMobile" v-model="mobileMenuOpen" direction="ltr" size="min(270px, 80vw)" :with-header="false" class="mobile-navigation-drawer" modal-class="mobile-navigation-overlay" append-to-body aria-label="导航菜单" @open="trackMenuTransition" @close="trackMenuTransition" @opened="finishMenuTransition" @closed="finishMenuTransition">
       <AppSidebar id="mobile-navigation" mobile-drawer @navigate="mobileMenuOpen = false" />
     </el-drawer>
     <main>
@@ -181,11 +220,6 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   padding: 0 16px;
-  border-bottom: 1px solid var(--day-line, #ffffff12);
-  background: var(--day-surface, #101713);
-}
-:global(html.android .mobile-header) {
-  background: var(--android-header-background);
 }
 .mobile-header > .app-icon { color: var(--green); }
 .menu-toggle {
@@ -193,7 +227,7 @@ onUnmounted(() => {
   place-items: center;
   width: 36px;
   height: 40px;
-  margin-left: -8px;
+  margin-inline-start: calc(var(--mobile-header-icon-inset) - 16px);
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -201,11 +235,21 @@ onUnmounted(() => {
   cursor: pointer;
 }
 .menu-toggle:focus-visible { outline: 2px solid var(--green); }
+:global(.mobile-navigation-overlay.el-overlay) { background-color: rgb(0 0 0 / 45%); }
+:global(.mobile-navigation-drawer.el-drawer) { background: var(--sidebar-surface); }
 :global(.mobile-navigation-drawer .el-drawer__body) { padding: 0; }
 @media (max-width: 700px) {
   .app-shell {
+    --mobile-header-height: 53px;
+    --mobile-header-icon-inset: 8px;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 53px minmax(0, 1fr);
+    grid-template-rows: var(--mobile-header-height) minmax(0, 1fr);
+  }
+  :global(.app-shell:has(> main .has-detail-toolbar)) {
+    grid-template-rows: minmax(0, 1fr);
+  }
+  :global(.app-shell:has(> main .has-detail-toolbar) > .mobile-header) {
+    display: none;
   }
   .app-shell > :deep(main:has(.route-page)) {
     padding-bottom: 0;

@@ -1,21 +1,36 @@
 // 手机端样式
 @media screen and (max-width: 768px) {
-  .topbar,.song-toolbar-search ,.batch-track-actions,.song-batch-toolbar>span{
-    
+  .topbar:not(.has-detail-toolbar),
+  .song-toolbar-search,
+  .batch-track-actions:not(.selection-actions > .batch-track-actions),
+  .song-batch-toolbar > span {
     display: none !important;
   }
   .song-batch-toolbar{
     flex-wrap: nowrap !important;
   }
-  .song-table .track-selection {
-    display: none !important;
-  }
-  .song-table .track-selection + .track-info {
-    grid-column: 1 / 3;
-  }
   .album-heading{
     strong{
       display: none;
     }
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  button,
+  [role="button"],
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  // Touch browsers can keep :hover active after a tap.
+  :is(button.icon-button, button.selection-toggle, button.el-button.is-text:not(.has-bg)):is(:hover, :focus:not(:focus-visible)):not(:active) {
+    background-color: transparent !important;
+  }
+
+  .el-button:not(.is-text):not(.is-link):is(:hover, :focus:not(:focus-visible)):not(:active) {
+    --el-button-hover-bg-color: var(--el-button-bg-color);
+    --el-button-hover-border-color: var(--el-button-border-color);
+    --el-button-hover-text-color: var(--el-button-text-color);
   }
 }

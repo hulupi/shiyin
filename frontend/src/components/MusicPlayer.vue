@@ -67,6 +67,30 @@ watch(
 );
 let playbackController: AbortController | undefined;
 let playbackDownloadAttempted = false;
+const BUFFER_TIMEOUT_MS = 15000;
+let recoveredFromBufferTimeout = false;
+
+watch(buffering, (waiting, _, onCleanup) => {
+  if (!waiting || isAndroidOnline) return;
+  const request = lyricRequest;
+  const timer = window.setTimeout(() => {
+    const track = current.value;
+    const media = audio.value;
+    if (request !== lyricRequest || !track || !media || media.paused || media.ended ||
+        media.currentSrc !== media.src || !playbackUrl.value) return;
+
+    if (recoveredFromBufferTimeout) {
+      pausePlayback();
+      next(1, true, true);
+      return;
+    }
+
+    recoveredFromBufferTimeout = true;
+    const position = restorePosition ?? media.currentTime;
+    void play(track, false, true, position);
+  }, BUFFER_TIMEOUT_MS);
+  onCleanup(() => window.clearTimeout(timer));
+}, { flush: "sync" });
 onMounted(() => {
   if (!isAndroidOnline && !playbackDownloadSettings.value) {
     void loadPlaybackDownloadSettings().catch(() => {});
@@ -83,7 +107,6 @@ const {
   currentPage: queuePage,
   pageSize: queueSize,
   total: queueTotal,
-  offset: queueOffset,
   pagedItems: pagedQueue,
   resize: resizeQueue,
 } = usePagination(queue);
@@ -113,11 +136,11 @@ function nativeItem(track: Track, path: string): AndroidPlaybackItem {
   };
 }
 
-function requestOnlinePlayback(track: Track, signal: AbortSignal, exclude: string[] = [], retry = false, activityId?: string): Promise<OnlinePlayback> {
+function requestOnlinePlayback(track: Track, signal: AbortSignal, exclude: string[] = [], retry = false, activityId?: string, quality = preferredQuality.value): Promise<OnlinePlayback> {
   return api("/online/" + encodeURIComponent(track.id) + "/resolve", {
     method: "POST",
     body: JSON.stringify({
-      quality: preferredQuality.value, exclude, skipLocal: retry,
+      quality, exclude, skipLocal: retry,
       onlineOnly: isAndroidOnline, activityId,
     }),
     signal,
@@ -450,10 +473,12 @@ function deletingTrackFile(event: Event) {
   duration.value = 0;
   lyricText.value = "";
 }
-function deletedTrackFile(event: Event) {
-  const id = (event as CustomEvent<string>).detail;
-  queue.value = queue.value.filter((track) => track.id !== id);
+function removeQueuedTrack(id: string) {
   if (nextQueuedId === id) nextQueuedId = undefined;
+  queue.value = queue.value.filter(track => track.id !== id);
+}
+function deletedTrackFile(event: Event) {
+  removeQueuedTrack((event as CustomEvent<string>).detail);
   void refresh();
 }
 onMounted(() => {
@@ -479,7 +504,7 @@ const playbackQualityLabel = computed(() => {
   }
 });
 
-async function play(track: Track, replace = true, retry = false, position?: number) {
+async function play(track: Track, replace = true, retry = false, position?: number, quality?: string) {
   if (!track.available) {
     notice.value = "文件暂不可用，请检查目录后重新扫描";
     return;
@@ -506,6 +531,7 @@ async function play(track: Track, replace = true, retry = false, position?: numb
   playbackUrl.value = "";
   playbackActivityReported = false;
   if (!retry) {
+    recoveredFromBufferTimeout = false;
     playbackDownloadAttempted = false;
     playbackActivityId = undefined;
     failedSources = [];
@@ -518,7 +544,7 @@ async function play(track: Track, replace = true, retry = false, position?: numb
   try {
     let lyricUrl = "/tracks/" + encodeURIComponent(track.id) + "/lyrics";
     if (track.online) {
-      const result = await requestOnlinePlayback(track, controller.signal, failedSources, retry, playbackActivityId);
+      const result = await requestOnlinePlayback(track, controller.signal, failedSources, retry, playbackActivityId, quality);
       if (request !== lyricRequest) return;
       usedSourceId = result.sourceId || "";
       playbackActivityId = result.activityId;
@@ -555,6 +581,25 @@ async function play(track: Track, replace = true, retry = false, position?: numb
     if (!controller.signal.aborted && request === lyricRequest) {
       buffering.value = false;
       if (isAndroidOnline) nativeId = "";
+      const unsupportedAudio = e instanceof Error && e.name === "NotSupportedError";
+      if (!isAndroidOnline && track.online && playbackUrl.value && unsupportedAudio) {
+        if (usedSourceId) {
+          const qualities = ["flac24bit", "flac", "320k", "128k"];
+          const index = qualities.indexOf(playbackQuality.value);
+          const lowerQuality = index >= 0 ? qualities[index + 1] : undefined;
+          if (lowerQuality) {
+            void play(track, false, true, position, lowerQuality);
+            return;
+          }
+        } else if (!retry) {
+          notice.value = "本地文件无法解码，正在尝试在线音源…";
+          void play(track, false, true, position);
+          return;
+        }
+        reportPlaybackFailure();
+        notice.value = "音频无法解码，请切换音源后重试。";
+        return;
+      }
       if (playbackUrl.value) reportPlaybackFailure();
       message(e);
     }
@@ -636,6 +681,7 @@ async function resumePlayback() {
   }
   if (isAndroidOnline) runNative("play");
   else if (audio.value) {
+    recoveredFromBufferTimeout = false;
     try {
       await mediaControl.play(audio.value, prepareSpectrum());
     } catch (e) {
@@ -664,7 +710,7 @@ function recordPlay() {
     .then((ids) => (library.value.history = ids))
     .catch(message);
 }
-function pickNext(delta: number, ended: boolean) {
+function pickNext(delta: number, ended: boolean, skipCurrent = false) {
   if (!queue.value.length) return;
   const index = queue.value.findIndex((t) => t.id === current.value?.id);
   if (
@@ -679,6 +725,10 @@ function pickNext(delta: number, ended: boolean) {
     delta === 1
       ? queue.value.findIndex((item) => item.id === nextQueuedId)
       : -1;
+  if (skipCurrent && forced < 0 && playbackMode.value === "随机播放") {
+    const alternatives = queue.value.filter(track => track.available && track.id !== current.value?.id);
+    return alternatives[Math.floor(Math.random() * alternatives.length)];
+  }
   const target =
     forced >= 0
       ? forced
@@ -687,8 +737,8 @@ function pickNext(delta: number, ended: boolean) {
         : (index + delta + queue.value.length) % queue.value.length;
   return queue.value[target];
 }
-function next(delta = 1, ended = false) {
-  if (ended && playbackMode.value === "单曲循环" && !nextQueuedId) {
+function next(delta = 1, ended = false, skipCurrent = false) {
+  if (!skipCurrent && ended && playbackMode.value === "单曲循环" && !nextQueuedId) {
     seek(0);
     if (isAndroidOnline) runNative("play");
     else if (audio.value) void mediaControl.play(audio.value).catch(message);
@@ -698,10 +748,11 @@ function next(delta = 1, ended = false) {
     runNative("next");
     return;
   }
-  const track = (delta === 1 ? preparedTracks[0]?.track : undefined) ?? pickNext(delta, ended);
-  if (!track) return;
+  const track = (delta === 1 ? preparedTracks[0]?.track : undefined) ?? pickNext(delta, ended, skipCurrent);
+  if (!track || (skipCurrent && (track.id === current.value?.id || !track.available))) return false;
   if (delta === 1 && track.id === nextQueuedId) nextQueuedId = undefined;
   void play(track, false);
+  return true;
 }
 
 watch(volume, (value) => { if (isAndroidOnline) runNative("volume", Number(value)); });
@@ -813,18 +864,24 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
     append-to-body
     class="queue-drawer"
     ><p v-if="!queue.length" class="subtle">播放一首歌曲，开始创建队列。</p>
-    <el-button
-      v-for="(track, index) in pagedQueue"
-      :key="track.id"
-      class="queue-row"
-      :class="{ selected: current?.id === track.id }"
-      @click="current?.id === track.id && (playing || playbackLoadingId === track.id) ? pausePlayback() : play(track, false)"
-      ><span>{{ queueOffset + index + 1 }}</span>
-      <TrackCover :track="track" playback :playing="playing && current?.id === track.id" />
-      <div>
-        {{ track.title }}<small>{{ track.artist }}</small>
-      </div></el-button
-    ><ListPagination
+    <div v-for="track in pagedQueue" :key="track.id" class="queue-item">
+      <el-button
+        class="queue-row"
+        :class="{ selected: current?.id === track.id }"
+        @click="current?.id === track.id && (playing || playbackLoadingId === track.id) ? pausePlayback() : play(track, false)"
+      >
+        <TrackCover :track="track" playback :playing="playing && current?.id === track.id" />
+        <div>{{ track.title }}<small>{{ track.artist }}</small></div>
+      </el-button>
+      <button
+        type="button"
+        class="queue-remove"
+        :aria-label="'从队列移除 ' + track.title"
+        title="移除"
+        @click="removeQueuedTrack(track.id)"
+      ><AppIcon name="close" :size="16" /></button>
+    </div>
+    <ListPagination
       v-model:page="queuePage"
       :page-size="queueSize"
       :total="queueTotal"
@@ -1067,7 +1124,7 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
           "
       /></el-button>
       <el-button
-        class="icon-button"
+        class="icon-button lyrics-button"
         :class="{ liked: showLyrics }"
         aria-label="歌词"
         @click="showLyrics = !showLyrics"
@@ -1097,6 +1154,7 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
     :src="playbackUrl || undefined"
     @playing="recordPlay"
     @waiting="buffering = Boolean(audio && !audio.paused)"
+    @stalled="buffering = Boolean(audio && !audio.paused && audio.readyState < 3)"
     @pause="playing = false; buffering = false"
     @timeupdate="updateAudioProgress"
     @ratechange="syncSystemMedia"
@@ -1311,21 +1369,11 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   font-size: 14px;
 }
 
-.queue-row > span {
-  color: var(--day-muted, #617e6a);
-  font-size: 12px;
-}
-
 .queue-row small {
   display: block;
   font-size: 12px;
   color: var(--day-muted, #71907c);
-  margin-top: 5px;
-}
-
-.queue-row.selected {
-  background: var(--day-selected, #23422d);
-  color: var(--green);
+  margin-top: 2px;
 }
 
 .lyrics-overlay {
@@ -1754,22 +1802,42 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
   scrollbar-width: thin;
   scrollbar-color: var(--day-scrollbar, #34513e) transparent;
 }
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.queue-item + .queue-item {
+  margin-top: 2px;
+}
+.queue-remove {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--day-muted);
+}
 .queue-row.el-button {
   display: flex;
-  width: 100%;
-  min-height: var(--song-row-height);
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  gap: 10px;
   justify-content: flex-start;
-  padding: 6px 10px;
+  padding: 3px 8px;
   border-radius: var(--song-row-radius);
   text-align: left;
   white-space: normal;
 }
-.queue-row.el-button + .queue-row.el-button {
-  margin-top: var(--song-row-gap);
+.queue-row.el-button :deep(.cover) {
+  width: 36px;
+  height: 36px;
 }
 .queue-row.el-button:hover,
-.queue-row.el-button:focus-visible,
-.queue-row.el-button.selected {
+.queue-row.el-button:focus-visible {
   background: var(--song-row-highlight);
 }
 .queue-row.el-button.selected {
@@ -2048,12 +2116,21 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
     height: 32px;
   }
   .player .track-details {
-    display: grid;
-    gap: 2px;
+    gap: 5px;
     margin-top: 2px;
+  }
+  .player .player-right > .lyrics-button {
+    display: none;
   }
   .player .track-time {
     white-space: nowrap;
+  }
+  .player .progress {
+    inset: 0 0 auto;
+  }
+  .player::after {
+    border-bottom: 0;
+    border-top: 2px solid var(--day-accent-text, #a9efc3);
   }
   .player .controls,
   .player .player-right {
@@ -2071,11 +2148,6 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
     width: 34px;
     height: 40px;
     flex-basis: 34px;
-  }
-}
-@media (max-width: 399px) {
-  .player .controls > .icon-button {
-    display: none;
   }
 }
 :global(.lyrics-dialog.el-dialog) {
@@ -2384,14 +2456,8 @@ defineExpose({ play: playOnline, enqueue, pause: pausePlayback });
     bottom: calc(4px + env(safe-area-inset-bottom, 0px));
   }
 
-  :global(html.android .player .progress) {
-    inset: 0 0 auto;
-  }
-
   :global(html.android .player::after) {
     inset: 0;
-    border-bottom: 0;
-    border-top: 2px solid var(--day-accent-text, #a9efc3);
   }
 }
 </style>

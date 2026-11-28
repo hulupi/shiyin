@@ -9,12 +9,13 @@ discoverRouter.use('/discover/:platform', (req,res,next)=>{
   const page=Number(req.query.page||1);if(!Number.isSafeInteger(page)||page<1||page>500)return res.status(400).json({error:'无效页码'});next();
 });
 const cachedHome = createCatalogCache(6 * 60 * 60 * 1000);
+const homePlaylistLimit = 16;
 
 async function homePlaylists(platform: string, refresh: boolean) {
   const first = await discoverPlaylists(platform, 1, refresh);
   const playlists = new Map(first.charts.map(playlist => [playlist.id, playlist]));
   let result = first;
-  for (let page = 2; result.hasMore && playlists.size < 12; page++) {
+  for (let page = 2; result.hasMore && playlists.size < homePlaylistLimit; page++) {
     result = await discoverPlaylists(platform, page, refresh);
     const previousSize = playlists.size;
     for (const playlist of result.charts) {
@@ -22,7 +23,7 @@ async function homePlaylists(platform: string, refresh: boolean) {
     }
     if (playlists.size === previousSize) break;
   }
-  return [...playlists.values()].slice(0, 12);
+  return [...playlists.values()].slice(0, homePlaylistLimit);
 }
 
 discoverRouter.get('/home/:platform', async (req, res) => {
@@ -32,8 +33,8 @@ discoverRouter.get('/home/:platform', async (req, res) => {
   const refresh = req.query.refresh === '1';
   const [charts, playlists] = await Promise.allSettled([
     cachedHome(`charts:${platform}`, refresh, async () =>
-      (await listCharts(platform, refresh)).slice(0, 6)),
-    cachedHome(`playlists:${platform}`, refresh, () =>
+      (await listCharts(platform, refresh)).slice(0, 8)),
+    cachedHome(`playlists:${platform}:${homePlaylistLimit}`, refresh, () =>
       homePlaylists(platform, refresh)),
   ]);
 

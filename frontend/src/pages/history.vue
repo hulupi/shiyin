@@ -55,12 +55,7 @@ async function clearHistory() {
 }
 </script>
 <template>
-  <PageLayout floating title="播放历史" description="找回最近听过的音乐">
-    <template #actions
-      ><el-button class="secondary" @click="clearHistory"
-        >清空历史</el-button
-      ></template
-    >
+  <PageLayout floating title="播放历史">
     <CollectionView
       plain-empty
       v-model:query="query"
@@ -75,20 +70,20 @@ async function clearHistory() {
       @enqueue="(track, next) => emit('enqueue', track, next)"
       @notify="emit('notify', $event)"
       @navigate="emit('navigate', $event)"
-    />
+    >
+      <template #actions>
+        <el-button class="secondary" @click="clearHistory">清空历史</el-button>
+      </template>
+    </CollectionView>
   </PageLayout>
 </template>
 
 <style scoped lang="scss">
 .secondary {
-  padding: 11px 18px;
   border-radius: 7px;
   font-weight: 600;
   font-size: 14px;
   white-space: nowrap;
-}
-
-.secondary {
   border: 1px solid var(--day-line, #344239);
   background: var(--day-surface-soft, #18201b);
   color: var(--day-text, #b8c8be);

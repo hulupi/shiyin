@@ -15,9 +15,6 @@ const emit = defineEmits<{
 const query = ref("");
 const sort = ref<"default" | "added-desc" | "added-asc" | "modified-desc">("added-desc");
 const collection = computed(() => library.value.tracks);
-const artists = computed(
-  () => new Set(collection.value.map((track) => track.artist)).size,
-);
 const tracks = computed(() => {
   const keyword = query.value.trim().toLowerCase();
   const filtered = keyword
@@ -43,7 +40,6 @@ const tracks = computed(() => {
   <PageLayout
     class="library-page"
     title="本地音乐"
-    description="浏览和播放 NAS 中的音乐收藏"
     local
   >
     <CollectionView
@@ -61,8 +57,6 @@ const tracks = computed(() => {
       @notify="emit('notify', $event)"
       @navigate="emit('navigate', $event)"
       local
-      :track-count="library.tracks.length"
-      :artists="artists"
       :directory-count="library.directories.length"
       @scan="scanLibrary()"
     >
@@ -85,6 +79,35 @@ const tracks = computed(() => {
   min-height: 0;
 }
 .library-sort {
-  width: min(100%, 210px);
+  flex: 0 1 210px;
+  width: 210px;
+  min-width: 110px;
+}
+.library-sort :deep(.el-select__wrapper) {
+  box-sizing: border-box;
+  height: 32px;
+  min-height: 32px;
+  padding-block: 0;
+}
+.library-page :deep(.song-toolbar-search .search-input) {
+  box-sizing: border-box;
+  height: 32px;
+}
+.library-page :deep(.song-toolbar) {
+  flex-flow: row nowrap;
+  align-items: center;
+}
+.library-page :deep(.song-toolbar > .song-batch-toolbar) {
+  flex-wrap: nowrap;
+}
+.library-page :deep(.song-toolbar-search) {
+  flex: 0 1 280px;
+  min-width: 120px;
+  margin-inline-start: auto;
+}
+@media (max-width: 700px) {
+  .library-page :deep(.song-toolbar) {
+    overflow-x: auto;
+  }
 }
 </style>

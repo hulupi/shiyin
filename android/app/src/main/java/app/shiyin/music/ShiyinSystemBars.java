@@ -1,7 +1,10 @@
 package app.shiyin.music;
 
 import android.content.res.Configuration;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.view.View;
@@ -18,6 +21,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 public final class ShiyinSystemBars extends Plugin {
     private int status;
     private int navigation;
+    private Integer drawerColor;
+    private float drawerWidth;
     private boolean darkIcons;
     private boolean hasAppearance;
 
@@ -29,7 +34,12 @@ public final class ShiyinSystemBars extends Plugin {
             call.reject("Invalid system bar color");
             return;
         }
+        String drawer = call.getString("drawerColor", "");
+        float width = call.getFloat("drawerWidth", 0f);
         getBridge().executeOnMainThread(() -> {
+            drawerWidth = width * getContext().getResources().getDisplayMetrics().density;
+            drawerColor = drawer != null && drawer.matches("#[0-9a-fA-F]{6}")
+                ? Color.parseColor(drawer) : null;
             status = Color.parseColor(statusColor);
             navigation = Color.parseColor(navigationColor);
             darkIcons = Boolean.TRUE.equals(call.getBoolean("darkIcons", false));
@@ -55,8 +65,8 @@ public final class ShiyinSystemBars extends Plugin {
         if (webView.getParent() instanceof View container) {
             container.setBackground(systemBarBackground());
         }
-        window.setStatusBarColor(status);
-        window.setNavigationBarColor(navigation);
+        window.setStatusBarColor(drawerColor == null ? status : Color.TRANSPARENT);
+        window.setNavigationBarColor(drawerColor == null ? navigation : Color.TRANSPARENT);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.setStatusBarContrastEnforced(false);
             window.setNavigationBarContrastEnforced(false);
@@ -67,7 +77,23 @@ public final class ShiyinSystemBars extends Plugin {
     }
 
     private GradientDrawable systemBarBackground() {
-        return new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-            new int[] {status, status, navigation, navigation});
+        int[] colors = {status, status, navigation, navigation};
+        Integer menu = drawerColor;
+        if (menu == null) {
+            return new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors);
+        }
+
+        float visibleDrawerWidth = drawerWidth;
+        Paint drawerPaint = new Paint();
+        drawerPaint.setColor(menu);
+        return new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors) {
+            @Override
+            public void draw(Canvas canvas) {
+                super.draw(canvas);
+                Rect bounds = getBounds();
+                float width = Math.min(visibleDrawerWidth, bounds.width());
+                canvas.drawRect(bounds.left, bounds.top, bounds.left + width, bounds.bottom, drawerPaint);
+            }
+        };
     }
 }

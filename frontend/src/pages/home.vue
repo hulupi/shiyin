@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import ListSkeleton from "../components/ListSkeleton.vue";
-import { computed, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type { Track } from "../../../backend/src/contracts";
 import AppIcon from "../components/AppIcon.vue";
 import CatalogCover from "../components/CatalogCover.vue";
+import CatalogPlatformToolbar from "../components/CatalogPlatformToolbar.vue";
 import CollectionView from "../components/CollectionView.vue";
 import PageLayout from "../components/PageLayout.vue";
 import { requestApi } from "../services/api";
@@ -51,20 +52,36 @@ const tracks = computed(() => {
     : collection.value;
 });
 
-const platforms = ["wy", "kw", "kg", "mg", "tx"].map(
-  (id) => chartPlatforms.find((item) => item.id === id)!,
-);
+const platforms = chartPlatforms;
 const platform = ref("wy");
 const platformName = computed(() => platforms.find((item) => item.id === platform.value)?.name);
 const charts = ref<Chart[]>([]);
 const playlists = ref<Chart[]>([]);
+function homeColumns() {
+  if (window.matchMedia("(max-width: 700px)").matches) return 3;
+  return window.matchMedia("(max-width: 1100px)").matches ? 4 : 8;
+}
+const columns = ref(homeColumns());
+function updateColumns() {
+  columns.value = homeColumns();
+}
+onMounted(() => window.addEventListener("resize", updateColumns));
+onUnmounted(() => window.removeEventListener("resize", updateColumns));
+const chartLimit = computed(() => columns.value === 3 ? 6 : 8);
+const playlistLimit = computed(() => columns.value === 3 ? 12 : 16);
+function completeRows(items: Chart[], limit: number) {
+  const count = Math.min(items.length, limit);
+  return items.slice(0, count - count % columns.value);
+}
+const visibleCharts = computed(() => completeRows(charts.value, chartLimit.value));
 const loading = ref(false);
 const chartError = ref(false);
 const playlistError = ref(false);
 const keyword = ref("");
 const filteredPlaylists = computed(() => {
   const search = keyword.value.trim().toLowerCase();
-  return playlists.value.filter((item) => item.name.toLowerCase().includes(search));
+  const matches = playlists.value.filter((item) => item.name.toLowerCase().includes(search));
+  return search ? matches.slice(0, playlistLimit.value) : completeRows(matches, playlistLimit.value);
 });
 let active: AbortController | undefined;
 
@@ -108,38 +125,31 @@ function openPlaylist(playlist: Chart) {
   navigate("发现歌单", platform.value, playlist.id, {
     name: playlist.name,
     author: playlist.update,
+    image: playlist.image,
   });
 }
 </script>
 
 <template>
-  <PageLayout class="home-page" title="发现音乐" description="各平台实时榜单与精选歌单">
-    <template #actions>
-      <button class="home-control refresh" type="button" :disabled="loading" @click="loadHome(true)">
-        <AppIcon name="refresh" :size="16" :spinning="loading" />刷新
-      </button>
-    </template>
-
-    <div class="platform-tabs" role="group" aria-label="音乐平台">
-      <el-button
-        v-for="item in platforms"
-        :key="item.id"
-        :class="{ active: item.id === platform }"
-        :aria-pressed="item.id === platform"
-        @click="platform = item.id"
-      >{{ item.name }}</el-button>
-    </div>
+  <PageLayout class="home-page" title="发现音乐" :style="{ '--home-columns': columns }">
+    <CatalogPlatformToolbar
+      v-model="platform"
+      :platforms="platforms"
+      :loading="loading"
+      label="首页音乐平台"
+      @refresh="loadHome(true)"
+    />
 
     <section class="home-section" :aria-busy="loading">
       <h2><AppIcon name="榜单" :size="20" />排行榜</h2>
       <p v-if="chartError" class="home-status" role="status">榜单加载失败，请刷新重试</p>
-      <ListSkeleton v-else-if="loading && !charts.length" class="home-grid" layout="covers" label="正在加载榜单" />
-      <p v-else-if="!charts.length" class="home-status" role="status">
+      <ListSkeleton v-else-if="loading && !visibleCharts.length" class="home-grid" layout="covers" :count="chartLimit" label="正在加载榜单" />
+      <p v-else-if="!visibleCharts.length" class="home-status" role="status">
         暂无榜单
       </p>
-      <div v-if="charts.length" class="home-grid">
+      <div v-if="visibleCharts.length" class="home-grid">
         <button
-          v-for="chart in charts"
+          v-for="chart in visibleCharts"
           :key="chart.id"
           type="button"
           class="home-card"
@@ -158,7 +168,7 @@ function openPlaylist(playlist: Chart) {
        
       </div>
       <p v-if="playlistError" class="home-status" role="status">推荐歌单加载失败，请刷新重试</p>
-      <ListSkeleton v-else-if="loading && !playlists.length" class="home-grid" layout="covers" :count="12" label="正在加载推荐歌单" />
+      <ListSkeleton v-else-if="loading && !filteredPlaylists.length" class="home-grid" layout="covers" :count="playlistLimit" label="正在加载推荐歌单" />
       <p v-else-if="!filteredPlaylists.length" class="home-status" role="status">
         {{ keyword.trim() ? "没有匹配的歌单" : "暂无推荐歌单" }}
       </p>
@@ -212,16 +222,6 @@ function openPlaylist(playlist: Chart) {
 .home-page :deep(.song-table-rows) {
   overflow: visible;
 }
-.home-page .platform-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 26px;
-}
-.platform-tabs > :deep(.el-button) {
-  margin: 0;
-  border-radius: 999px;
-}
 .home-section {
   min-width: 0;
   margin-bottom: 42px;
@@ -250,36 +250,9 @@ function openPlaylist(playlist: Chart) {
 .home-section h2 :deep(svg) {
   color: var(--green);
 }
-.home-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: inherit;
-  background: transparent;
-  font-size: 13px;
-}
-.home-control.refresh {
-  border-radius: 999px;
-}
-.home-control:hover:not(:disabled),
-.home-control:focus-within {
-  border-color: var(--green);
-}
-.home-control input {
-  width: 124px;
-  padding: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-}
 .home-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--home-columns), minmax(0, 1fr));
   gap: 24px clamp(12px, 1.7vw, 28px);
 }
 .home-card {
@@ -319,17 +292,9 @@ function openPlaylist(playlist: Chart) {
   margin: 0 0 12px;
   font-size: 16px;
 }
-@media (max-width: 1100px) {
-  .home-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
 @media (max-width: 700px) {
   .home-page :deep(.content) {
     overflow: visible;
-  }
-  .home-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .home-section {
     margin-bottom: 30px;

@@ -345,7 +345,6 @@ onUnmounted(() => {
   <PageLayout
     floating
     title="下载管理"
-    description="管理下载任务与 NAS 中的音乐文件"
   >
     <div ref="container" class="downloads-page" @scroll.capture="loadMore">
       <div class="download-summary">
